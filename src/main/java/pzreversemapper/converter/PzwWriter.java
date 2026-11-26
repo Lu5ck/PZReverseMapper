@@ -15,6 +15,9 @@ import java.util.TreeSet;
 
 /** Writes the WorldEd {@code .pzw} project with cells and objects. */
 final class PzwWriter {
+    static final int NATIVE_256_CELL_SIZE = 256;
+    static final int LEGACY_300_CELL_SIZE = 300;
+
     private static final String[] KNOWN_OBJECT_TYPES = {
         "TownZone",
         "Forest",
@@ -134,7 +137,8 @@ final class PzwWriter {
 
         try (TextFileWriter writer = new TextFileWriter(Paths.get(file))) {
             writer.writeLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-            writer.writeLine("<world version=\"1.0\" width=\"" + width + "\" height=\"" + height + "\">");
+            writer.writeLine("<world version=\"1.0\" width=\"" + width + "\" height=\"" + height + "\""
+                + cellFormatAttribute(targetCellSize) + ">");
             writer.writeLine("<BMPToTMX>");
             writer.writeLine("<tmxexportdir path=\"tmx\"/>");
             writer.writeLine("<rulesfile path=\"\"/>");
@@ -182,6 +186,21 @@ final class PzwWriter {
 
             writer.writeLine("</world>");
         }
+    }
+
+    /**
+     * WorldEd reads the cell grid from the {@code cellFormat} attribute of {@code <world>}:
+     * {@code native-256} for Build 42 256x256 cells, and {@code legacy-300} when the attribute is
+     * absent. Without it a 256 export opens as a 300x300 world, so it is written for 256 cells.
+     * 300 exports omit it, which keeps them identical to the original converter's output.
+     */
+    static String cellFormatAttribute(int targetCellSize) {
+        return targetCellSize == NATIVE_256_CELL_SIZE ? " cellFormat=\"native-256\"" : "";
+    }
+
+    /** True when WorldEd has a grid format for this cell size (legacy-300 or native-256). */
+    static boolean isWorldEdCellSize(int targetCellSize) {
+        return targetCellSize == NATIVE_256_CELL_SIZE || targetCellSize == LEGACY_300_CELL_SIZE;
     }
 
     private static void writeCommonTypes(TextFileWriter writer, List<MapObject> objects) throws IOException {

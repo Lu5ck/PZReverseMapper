@@ -70,7 +70,7 @@ final class GuideDialog extends JDialog {
 
         section(guide, "2. Output grid");
         bullet(guide, "WorldEd TMX 300x300 is the classic editable map workflow and remains the default.");
-        bullet(guide, "Native TMX 256x256 keeps output cells aligned to Build 42 boundaries when that is what you want to inspect.");
+        bullet(guide, "Native TMX 256x256 keeps output cells aligned to Build 42 boundaries, and marks the PZW as a native-256 WorldEd project so PZ_Mapping_Tools opens it with 256x256 cells.");
 
         section(guide, "3. Reprojection rule");
         body(guide, "Tiles, rooms and objects are reprojected through world coordinates before they are written to the target grid.");

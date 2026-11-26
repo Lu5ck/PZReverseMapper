@@ -106,6 +106,11 @@ For Build 42 maps intended for WorldEd, use:
 B42 source 256 -> TMX 300
 ```
 
+To keep the native Build 42 grid, use `B42 source 256 -> TMX 256`. That export
+marks the WorldEd project as `cellFormat="native-256"`, so
+[PZ_Mapping_Tools](https://github.com/Unjammer/PZ_Mapping_Tools) opens it as a
+native 256 × 256 project.
+
 When `Tile sheets` is the only selected output, Studio automatically enters
 tiles-only mode. The compiled map input is not required and no `.lotheader` or
 `.lotpack` file is parsed.
@@ -155,7 +160,7 @@ java -Xmx12g -jar PZReverseMapper-1.0.0.jar --input ... --output ...
 ## Main outputs
 
 - `tmx/*.tmx` — editable map cells
-- `<project>.pzw` — WorldEd project
+- `<project>.pzw` — WorldEd project (marked `native-256` for 256 × 256 exports)
 - `tmx/tbx/<cell>/*.tbx` — RoomDef TBX files
 - `tbx_buildings/<source-cell>/*.tbx` — supplemental reconstructed buildings
 - `maps_img/*` — per-cell previews

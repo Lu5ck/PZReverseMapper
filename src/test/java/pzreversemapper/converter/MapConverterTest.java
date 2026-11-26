@@ -89,6 +89,38 @@ class MapConverterTest {
     }
 
     @Test
+    void nativeGridExportIsMarkedAsNative256ForWorldEd() throws Exception {
+        new MapConverter(b42Options().targetCellSize(256).exportImages(false).build()).run();
+
+        Element world = parse(output.resolve("Synthetic.pzw")).getDocumentElement();
+        assertEquals("native-256", world.getAttribute("cellFormat"), "WorldEd reads the cell grid from this attribute");
+        assertEquals("3", world.getAttribute("width"));
+        assertEquals("1", world.getAttribute("height"));
+
+        NodeList cells = world.getElementsByTagName("cell");
+        assertEquals(3, cells.getLength());
+        for (int i = 0; i < cells.getLength(); i++) {
+            Path tmx = output.resolve(((Element) cells.item(i)).getAttribute("map"));
+            Element map = parse(tmx).getDocumentElement();
+            assertEquals("256", map.getAttribute("width"), "native-256 lot export requires 256x256 TMX cells");
+            assertEquals("256", map.getAttribute("height"));
+        }
+
+        // Source cells 1..3 map one-to-one onto the native grid, so the origin is the first source cell.
+        Element origin = (Element) world.getElementsByTagName("worldOrigin").item(0);
+        assertEquals("1,1", origin.getAttribute("origin"));
+    }
+
+    @Test
+    void classicGridExportKeepsTheLegacyWorldHeader() throws Exception {
+        new MapConverter(b42Options().exportImages(false).build()).run();
+        Element world = parse(output.resolve("Synthetic.pzw")).getDocumentElement();
+        assertFalse(world.hasAttribute("cellFormat"), "no attribute means legacy-300, as in the original converter");
+        assertTrue(Files.readString(output.resolve("Synthetic.pzw"), StandardCharsets.UTF_8)
+            .contains("<world version=\"1.0\" width=\"4\" height=\"2\">\r\n"));
+    }
+
+    @Test
     void tileGidsMatchTilesetsAndReprojection() throws Exception {
         new MapConverter(b42Options().exportImages(false).build()).run();
 

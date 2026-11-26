@@ -144,7 +144,11 @@ lotpacks. Studio enables this mode automatically when Tile sheets is the only
 selected output.
 
 The output TMX grid is `300x300` by default. Use `--target-cell-size 256` when
-you want native Build 42-sized TMX cells instead. Internally, source tiles are
+you want native Build 42-sized TMX cells instead. A 256 export writes
+`cellFormat="native-256"` on the `.pzw` `<world>` element, which is how WorldEd in
+PZ_Mapping_Tools recognises a native 256x256 project; without it the project
+would open as a legacy 300x300 world. WorldEd has no grid format for other
+sizes, so the converter warns that such projects open as legacy-300. Internally, source tiles are
 converted through world coordinates:
 
 ```text

@@ -414,7 +414,7 @@ final class MainWindow extends JFrame {
         String trash = OutputCleaner.trashName();
         workflowPresetBox.setToolTipText("Chooses a coherent set of source, output grid and extra exports.");
         sourceProfileBox.setToolTipText("Auto reads the lotheader size. v41 validates 300. B42 validates 256.");
-        targetGridBox.setToolTipText("300 keeps the classic WorldEd grid. 256 writes native Build 42-sized TMX cells.");
+        targetGridBox.setToolTipText("300 keeps the classic WorldEd grid. 256 writes native Build 42-sized TMX cells in a native-256 WorldEd project.");
         cleanBox.setToolTipText("Asks for confirmation, then moves existing output contents to the " + trash + ".");
         imagesBox.setToolTipText("Writes per-cell and merged PNG map previews used by the map workflow.");
         tilePacksBox.setToolTipText("When selected alone, extracts tiles without reading lotheaders or lotpacks.");

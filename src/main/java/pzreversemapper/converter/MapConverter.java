@@ -123,6 +123,11 @@ public final class MapConverter {
             pzwFile = "";
         } else {
             report("PZW", "Writing WorldEd project");
+            if (!PzwWriter.isWorldEdCellSize(options.targetCellSize())) {
+                System.out.println("Warning: WorldEd only supports 300x300 (legacy-300) and 256x256 (native-256) cells; "
+                    + "the " + options.targetCellSize() + "x" + options.targetCellSize() + " project will open as legacy-300.");
+            }
+
             PzwWriter.write(pzwFile, options.projectName(), targetCells.keySet(), objects, options.targetCellSize());
         }
 
