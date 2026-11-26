@@ -186,6 +186,7 @@ final class TbxReconstructor {
             addDoorsAndWindows(building, observed, stats);
             addStairs(building, observed, stats);
             addFurniture(building, observed, stats);
+            chooseFurnitureLayers(building, observed);
             chooseBuildingDefaults(building);
         }
 
@@ -800,6 +801,124 @@ final class TbxReconstructor {
                 floor.objects.add(new Furniture(placement.x(), placement.y(), placement.def(), placement.orient()));
             }
         }
+    }
+
+    /**
+     * BuildingFurniture often defines the same piece in several layers (a wall shelf as
+     * WallFurniture and as Furniture, a wall cabinet as Roof and as WallFurniture). The layer decides
+     * where the piece sits in the square's tile stack, so for each furniture object that is part of a
+     * stacking mismatch, the same-shaped definitions in other layers are tried and the one reproducing
+     * the most compiled tiles is kept.
+     */
+    private void chooseFurnitureLayers(Building building, List<List<String>[][]> observed) {
+        for (Floor floor : building.floors) {
+            List<String>[][] stacks = observed.get(floor.index);
+            for (int round = 0; round < 4; round++) {
+                boolean[][] mismatched = new boolean[building.width + 1][building.height + 1];
+                if (matchedTiles(building, floor, stacks, mismatched) < 0) {
+                    break;
+                }
+
+                boolean improved = false;
+                for (int i = 0; i < floor.objects.size(); i++) {
+                    if (!(floor.objects.get(i) instanceof Furniture item) || !touches(item, mismatched)) {
+                        continue;
+                    }
+
+                    List<Furniture> alternatives = layerAlternatives(item);
+                    if (alternatives.isEmpty()) {
+                        continue;
+                    }
+
+                    int best = matchedTiles(building, floor, stacks, null);
+                    Furniture chosen = item;
+                    for (Furniture alternative : alternatives) {
+                        floor.objects.set(i, alternative);
+                        int score = matchedTiles(building, floor, stacks, null);
+                        if (score > best) {
+                            best = score;
+                            chosen = alternative;
+                        }
+                    }
+
+                    floor.objects.set(i, chosen);
+                    improved |= chosen != item;
+                }
+
+                if (!improved) {
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * Compiled tiles of a floor reproduced by the building as it renders now. Squares with a
+     * stacking mismatch are flagged in {@code mismatched} when given; returns -1 when there is none.
+     */
+    private int matchedTiles(Building building, Floor floor, List<String>[][] stacks, boolean[][] mismatched) {
+        RenderedFloor rendered = layout.render(building, floor);
+        int matched = 0;
+        boolean any = false;
+        for (int x = 0; x <= building.width; x++) {
+            for (int y = 0; y <= building.height; y++) {
+                List<Object[]> renderedStack = rendered.stack(x, y);
+                int squareMatched = 0;
+                for (int m : align(stacks[x][y], renderedStack)) {
+                    if (m >= 0) {
+                        squareMatched++;
+                    }
+                }
+
+                matched += squareMatched;
+                if (mismatched != null && squareMatched < renderedStack.size()) {
+                    mismatched[x][y] = true;
+                    any = true;
+                }
+            }
+        }
+
+        return mismatched != null && !any ? -1 : matched;
+    }
+
+    /** Whether a furniture object covers one of the flagged squares. */
+    private static boolean touches(Furniture item, boolean[][] squares) {
+        for (TbxModel.Point point : item.resolved().tiles.keySet()) {
+            int x = item.x + point.x();
+            int y = item.y + point.y();
+            if (x >= 0 && y >= 0 && x < squares.length && y < squares[0].length && squares[x][y]) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** The same piece (same tiles on the same squares) from definitions in other layers, one per layer. */
+    private List<Furniture> layerAlternatives(Furniture item) {
+        FurnitureEntry entry = item.resolved();
+        if (entry.isEmpty() || shiftsEastSouth(item.def.layer, item.orient)) {
+            return List.of();
+        }
+
+        Map<String, Furniture> byLayer = new LinkedHashMap<>();
+        String tile = entry.tiles.values().iterator().next();
+        for (FurnitureUse use : config.furnitureUsing(tile)) {
+            FurnitureDef def = use.def();
+            if (def.layer.equals(item.def.layer) || def.layer.equals("Walls") || byLayer.containsKey(def.layer)
+                || shiftsEastSouth(def.layer, item.orient) || !def.resolved(item.orient).tiles.equals(entry.tiles)) {
+                continue;
+            }
+
+            byLayer.put(def.layer, new Furniture(item.x, item.y, def, item.orient));
+        }
+
+        return new ArrayList<>(byLayer.values());
+    }
+
+    /** Layers whose E and S orientations are drawn one square further (see TbxLayout.placeFurniture). */
+    private static boolean shiftsEastSouth(String layer, String orient) {
+        return (orient.equals("E") || orient.equals("S")) && (layer.equals("RoofCap") || layer.equals("Frames") || layer.equals("Doors"));
     }
 
     private Placement placementFor(FurnitureUse use, int x, int y, List<String>[][] remaining, Building building) {

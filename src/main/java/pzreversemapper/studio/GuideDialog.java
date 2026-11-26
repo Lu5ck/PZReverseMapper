@@ -93,6 +93,7 @@ final class GuideDialog extends JDialog {
         bullet(guide, "The mod asset folder is loaded after Tiles/media, so it can add custom sheets or replace matching sheet metadata without polluting the game media folder.");
         code(guide, "MyModAssets/\n  my_tiles.tiles\n  texturepacks/\n    my_pack.pack");
         body(guide, "A texture pack folder named texturespack is also accepted for existing prepared folders.");
+        bullet(guide, "Tiles/media and BuildingEd config are remembered between runs (studio.properties in your user configuration folder). Clear a field to forget it.");
         bullet(guide, "BuildingEd config is optional. Point it at the PZ_Mapping_Tools folder holding BuildingTiles.txt, BuildingFurniture.txt and TMXConfig.txt to rebuild building TBX files as real BuildingEd buildings.");
 
         section(guide, "6. Output options");

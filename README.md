@@ -118,6 +118,13 @@ supported.
 To get editable BuildingEd buildings, set `BuildingEd config` to the folder
 holding `BuildingTiles.txt` (see [Rebuilding BuildingEd buildings](#rebuilding-buildinged-buildings)).
 
+Studio remembers `Tiles/media` and `BuildingEd config` between runs. They are
+kept in `studio.properties` in your user configuration folder
+(`%APPDATA%\PZReverseMapper` on Windows,
+`~/Library/Application Support/PZReverseMapper` on macOS,
+`~/.config/PZReverseMapper` on Linux), so they also survive updating the jar.
+Clear a field to forget it.
+
 When `Tile sheets` is the only selected output, Studio automatically enters
 tiles-only mode. The compiled map input is not required and no `.lotheader` or
 `.lotpack` file is parsed.
@@ -181,7 +188,11 @@ compiled building is rebuilt as a proper BuildingEd building:
   exterior wall, trim and grime.
 - Door and window wall variants become door and window objects with their
   frames, curtains and shutters; stair runs become stairs; furniture is matched
-  against BuildingFurniture, largest pieces first.
+  against BuildingFurniture, largest pieces first. BuildingFurniture often
+  defines the same piece in several layers (a wall shelf as `WallFurniture`
+  and as `Furniture`, a wall cabinet as `Roof` and as `WallFurniture`); the
+  layer decides where the piece sits in the square's tile stack, so the
+  definition that reproduces the compiled stacking order is used.
 - The rebuilt building is rendered again with a Java port of BuildingEd's
   layout rules and compared with the compiled tiles. Anything not reproduced is
   kept as user-drawn tiles, so nothing is lost. The console reports how much

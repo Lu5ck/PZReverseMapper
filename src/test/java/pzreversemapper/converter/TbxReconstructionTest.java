@@ -63,7 +63,7 @@ class TbxReconstructionTest {
     @Test
     void configIsFoundInSubfoldersAndParsed() {
         assertTrue(config.entryCount() >= 15);
-        assertEquals(3, config.furnitureCount());
+        assertEquals(5, config.furnitureCount());
         assertEquals("Floor", config.layers().get(0));
         assertEquals(2, config.entries("exterior_walls").size());
         assertEquals("walls_exterior_house_01_10", config.entries("exterior_walls").get(0).tile("WestDoor"), "padded ids are normalised");
@@ -127,6 +127,39 @@ class TbxReconstructionTest {
         Building reread = TbxReader.read(file);
         assertEquals(sorted(rebuilt.floors.get(0).objects), sorted(reread.floors.get(0).objects));
         assertRendersLike(original, reread);
+    }
+
+    @Test
+    void furnitureDefinedInSeveralLayersKeepsTheCompiledStackingOrder() {
+        // A shelf drawn after the bed on the same square: only the Furniture-layer shelf stacks like
+        // that (the WallFurniture one, listed first, would sit under the bed).
+        TbxModel.FurnitureDef furnitureShelf = shelf("Furniture");
+        original.floors.get(0).objects.add(new Furniture(3, 1, furnitureShelf, "N"));
+        compiled = TbxFixture.compiledStacks(original, config);
+        assertEquals(List.of("furniture_bedding_01_0", "furniture_shelving_01_33"),
+            compiled[0][3][1].subList(compiled[0][3][1].size() - 2, compiled[0][3][1].size()));
+
+        TbxReconstructor.Result result = rebuild();
+        assertEquals(0, result.stats().unmatched);
+        assertEquals(0, result.stats().extra);
+        assertEquals(1, result.stats().userTiles, "the shelf and the bed stay furniture; only the decoration is a user tile");
+        Furniture rebuiltShelf = result.building().floors.get(0).objects.stream()
+            .filter(object -> object instanceof Furniture item && item.def.layer.equals("Furniture") && item.x == 3 && item.y == 1
+                && "furniture_shelving_01_33".equals(item.resolved().tile(0, 0)))
+            .map(Furniture.class::cast).findFirst().orElse(null);
+        assertNotNull(rebuiltShelf, "the shelf is rebuilt from its Furniture-layer definition");
+        assertNotNull(shelf("WallFurniture"), "the WallFurniture shelf exists and comes first in the config");
+        assertTrue(shelf("WallFurniture").configIndex < furnitureShelf.configIndex);
+    }
+
+    private TbxModel.FurnitureDef shelf(String layer) {
+        for (BuildingEdConfig.FurnitureUse use : config.furnitureUsing("furniture_shelving_01_33")) {
+            if (use.def().layer.equals(layer)) {
+                return use.def();
+            }
+        }
+
+        return null;
     }
 
     @Test

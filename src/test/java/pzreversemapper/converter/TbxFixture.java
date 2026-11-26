@@ -59,7 +59,12 @@ final class TbxFixture {
             + "group\n{\n    label = Bedroom\n    furniture\n    {\n"
             + entry("W", "0,0 = furniture_bedding_01_000\n            0,1 = furniture_bedding_01_001")
             + entry("N", "0,0 = furniture_bedding_01_002\n            1,0 = furniture_bedding_01_003") + "    }\n"
-            + "    furniture\n    {\n" + entry("W", "0,0 = furniture_tables_01_000") + entry("N", "0,0 = furniture_tables_01_001") + "    }\n}\n";
+            + "    furniture\n    {\n" + entry("W", "0,0 = furniture_tables_01_000") + entry("N", "0,0 = furniture_tables_01_001") + "    }\n}\n"
+            // The same wall shelf twice, in different layers (BuildingFurniture.txt does this a lot).
+            + "group\n{\n    label = Shelving\n    furniture\n    {\n        layer = WallFurniture\n"
+            + entry("W", "0,0 = furniture_shelving_01_032") + entry("N", "0,0 = furniture_shelving_01_033") + "    }\n"
+            + "    furniture\n    {\n" + entry("W", "0,0 = furniture_shelving_01_032") + entry("N", "0,0 = furniture_shelving_01_033")
+            + "    }\n}\n";
         Files.writeString(directory.resolve(BuildingEdConfig.BUILDING_FURNITURE), furniture, StandardCharsets.UTF_8);
 
         StringBuilder tmx = new StringBuilder("version = 1\nrevision = 1\nsource_revision = 0\nlayers\n{\n");

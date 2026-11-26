@@ -13,8 +13,11 @@ import java.awt.Insets;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ItemEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.LocalTime;
@@ -44,6 +47,7 @@ import javax.swing.JProgressBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingWorker;
+import javax.swing.Timer;
 import javax.swing.ToolTipManager;
 import javax.swing.WindowConstants;
 import javax.swing.border.TitledBorder;
@@ -124,6 +128,9 @@ final class MainWindow extends JFrame {
     private final JButton exportButton = new AccentButton("Run export", Theme.ACCENT);
     private final JButton openOutputButton = new JButton("Open output");
 
+    private final StudioSettings settings = StudioSettings.forCurrentUser().load();
+    /** Saves the remembered paths shortly after the last edit. */
+    private final Timer saveSettingsTimer = new Timer(700, event -> saveSettings());
     private boolean isApplyingPreset;
     private boolean isUpdatingProjectNameFromInput;
     private boolean projectNameEditedByUser;
@@ -140,11 +147,46 @@ final class MainWindow extends JFrame {
         setPreferredSize(new Dimension(1120, 900));
 
         configureDefaults();
+        restoreRememberedPaths();
         wireEvents();
         configureTooltips();
         updateCommandPreview();
         pack();
         setLocationRelativeTo(null);
+        saveSettingsTimer.setRepeats(false);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent event) {
+                saveSettings();
+            }
+        });
+    }
+
+    /** Fills Tiles/media and BuildingEd config with the paths used last time. */
+    private void restoreRememberedPaths() {
+        String tiles = settings.get(StudioSettings.TILES_PATH);
+        String config = settings.get(StudioSettings.BUILDINGED_CONFIG_PATH);
+        tilesBox.setText(tiles);
+        tbxConfigBox.setText(config);
+        if (!tiles.isEmpty() || !config.isEmpty()) {
+            appendLog("Remembered paths restored (Tiles/media, BuildingEd config) from " + settings.file());
+        }
+    }
+
+    /** Stores Tiles/media and BuildingEd config for the next start. */
+    private void saveSettings() {
+        saveSettingsTimer.stop();
+        boolean changed = settings.set(StudioSettings.TILES_PATH, tilesBox.getText());
+        changed |= settings.set(StudioSettings.BUILDINGED_CONFIG_PATH, tbxConfigBox.getText());
+        if (!changed) {
+            return;
+        }
+
+        try {
+            settings.save();
+        } catch (IOException ex) {
+            appendLog("Could not remember the paths in " + settings.file() + ": " + Text.messageOf(ex));
+        }
     }
 
     private JPanel buildLayout() {
@@ -400,7 +442,10 @@ final class MainWindow extends JFrame {
             updateCommandPreview();
         });
         onTextChanged(outputBox, text -> updateCommandPreview());
-        onTextChanged(tilesBox, text -> updateCommandPreview());
+        onTextChanged(tilesBox, text -> {
+            updateCommandPreview();
+            saveSettingsTimer.restart();
+        });
         onTextChanged(modTilesPathBox, text -> updateCommandPreview());
         onTextChanged(projectNameBox, text -> {
             if (!isUpdatingProjectNameFromInput) {
@@ -410,7 +455,10 @@ final class MainWindow extends JFrame {
             updateCommandPreview();
         });
         onTextChanged(cellsBox, text -> updateCommandPreview());
-        onTextChanged(tbxConfigBox, text -> updateCommandPreview());
+        onTextChanged(tbxConfigBox, text -> {
+            updateCommandPreview();
+            saveSettingsTimer.restart();
+        });
     }
 
     private void configureTooltips() {
@@ -552,6 +600,7 @@ final class MainWindow extends JFrame {
     }
 
     private void runExport() {
+        saveSettings();
         ConverterOptions options;
         try {
             options = buildOptions();
