@@ -158,6 +158,95 @@ public final class SyntheticMap {
     private record Room(String name, int floor, int[][] rects) {
     }
 
+    /** Supplies the compiled tile stack of a cell-local square. */
+    @FunctionalInterface
+    interface StackAt {
+        List<String> stack(int localX, int localY, int level);
+    }
+
+    /**
+     * Writes a Build 42 cell (lotheader + lotpack) whose squares hold the given stacks. Rooms are
+     * cell-local rectangles; all rooms form building 0.
+     */
+    static void writeCompiledCell(Path directory, int cellX, int cellY, int minLevel, int maxLevel, StackAt stackAt,
+                                  List<RoomRect> localRooms) throws IOException {
+        List<String> tiles = new ArrayList<>();
+        Map<String, Integer> tileIndex = new LinkedHashMap<>();
+        for (int level = minLevel; level <= maxLevel; level++) {
+            for (int x = 0; x < 256; x++) {
+                for (int y = 0; y < 256; y++) {
+                    for (String tile : stackAt.stack(x, y, level)) {
+                        tileIndex.computeIfAbsent(tile, name -> {
+                            tiles.add(name);
+                            return tiles.size() - 1;
+                        });
+                    }
+                }
+            }
+        }
+
+        List<Room> rooms = new ArrayList<>();
+        int[] building = new int[localRooms.size()];
+        for (int i = 0; i < localRooms.size(); i++) {
+            RoomRect rect = localRooms.get(i);
+            rooms.add(new Room(rect.name(), rect.floor(), new int[][] {{rect.x(), rect.y(), rect.width(), rect.height()}}));
+            building[i] = i;
+        }
+
+        writeLotHeaderV1(directory.resolve(cellX + "_" + cellY + ".lotheader"), tiles, minLevel, maxLevel, rooms,
+            new int[][] {building}, new byte[32 * 32]);
+
+        int chunkCount = 32 * 32;
+        ByteArrayOutputStream data = new ByteArrayOutputStream();
+        long[] offsets = new long[chunkCount];
+        long base = 12L + chunkCount * 8L;
+        for (int chunkX = 0; chunkX < 32; chunkX++) {
+            for (int chunkY = 0; chunkY < 32; chunkY++) {
+                offsets[chunkX * 32 + chunkY] = base + data.size();
+                int pendingEmpty = 0;
+                for (int z = minLevel; z <= maxLevel; z++) {
+                    for (int x = 0; x < 8; x++) {
+                        for (int y = 0; y < 8; y++) {
+                            List<String> stack = stackAt.stack(chunkX * 8 + x, chunkY * 8 + y, z);
+                            if (stack.isEmpty()) {
+                                pendingEmpty++;
+                                continue;
+                            }
+
+                            if (pendingEmpty > 0) {
+                                writeInt(data, -1);
+                                writeInt(data, pendingEmpty);
+                                pendingEmpty = 0;
+                            }
+
+                            writeInt(data, stack.size() + 1);
+                            writeInt(data, -1);
+                            for (String tile : stack) {
+                                writeInt(data, tileIndex.get(tile));
+                            }
+                        }
+                    }
+                }
+
+                if (pendingEmpty > 0) {
+                    writeInt(data, -1);
+                    writeInt(data, pendingEmpty);
+                }
+            }
+        }
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write("LOTP".getBytes(StandardCharsets.US_ASCII));
+        writeInt(out, 1);
+        writeInt(out, 8);
+        for (long offset : offsets) {
+            writeLong(out, offset);
+        }
+
+        data.writeTo(out);
+        Files.write(directory.resolve("world_" + cellX + "_" + cellY + ".lotpack"), out.toByteArray());
+    }
+
     private static void writeLotHeaderV1(Path file, List<String> tiles, int minLevel, int maxLevel, List<Room> rooms, int[][] buildings,
                                          byte[] density) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();

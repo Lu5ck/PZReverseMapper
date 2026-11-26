@@ -51,6 +51,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.DefaultCaret;
 import pzreversemapper.converter.AppInfo;
+import pzreversemapper.converter.BuildingEdConfig;
 import pzreversemapper.converter.CellCoord;
 import pzreversemapper.converter.ConversionProgress;
 import pzreversemapper.converter.ConversionResult;
@@ -66,12 +67,15 @@ import pzreversemapper.converter.Text;
 final class MainWindow extends JFrame {
     private static final long serialVersionUID = 1L;
     private static final String APP_NAME = AppInfo.APP_NAME;
-    private static final int CUSTOM_PRESET = 6;
+    private static final int CUSTOM_PRESET = 5;
+    private static final int GRID_AUTO = 0;
+    private static final int GRID_300 = 1;
+    private static final int GRID_256 = 2;
+    private static final int PROFILE_B42 = 2;
     private static final DateTimeFormatter LOG_TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     private static final String[] PRESETS = {
-        "Initial export - auto to 300",
-        "B42 source 256 -> TMX 300",
+        "Initial export - auto grid",
         "B42 source 256 -> TMX 256",
         "v41 source 300 -> TMX 300",
         "Map only - no TBX",
@@ -86,7 +90,8 @@ final class MainWindow extends JFrame {
     };
 
     private static final String[] TARGET_GRIDS = {
-        "WorldEd TMX 300 x 300",
+        "Auto - match source grid",
+        "WorldEd TMX 300 x 300 (v41 sources)",
         "Native TMX 256 x 256"
     };
 
@@ -100,6 +105,7 @@ final class MainWindow extends JFrame {
     private final HintTextField modTilesPathBox = new HintTextField();
     private final HintTextField projectNameBox = new HintTextField();
     private final HintTextField cellsBox = new HintTextField();
+    private final HintTextField tbxConfigBox = new HintTextField();
     private final JCheckBox cleanBox = new JCheckBox("Clean output folder");
     private final JCheckBox imagesBox = new JCheckBox("Images");
     private final JCheckBox tilePacksBox = new JCheckBox("Tile sheets");
@@ -254,10 +260,13 @@ final class MainWindow extends JFrame {
         projectNameBox.setHint("Auto from selected map folder");
         cellsBox.setHint("Optional, for example 46_26,46_27");
 
-        addCell(grid, createLabel("Project name", 170), 0, 4, 1, 0);
-        addCell(grid, projectNameBox, 1, 4, 1, 1);
-        addCell(grid, createLabel("Source cells", 170), 0, 5, 1, 0);
-        addCell(grid, cellsBox, 1, 5, 1, 1);
+        tbxConfigBox.setHint("Optional PZ_Mapping_Tools folder with BuildingTiles.txt, to rebuild building TBX files");
+        addPathRow(grid, 4, "BuildingEd config", tbxConfigBox, () -> browseFolder(tbxConfigBox, "BuildingEd config folder (BuildingTiles.txt)"));
+
+        addCell(grid, createLabel("Project name", 170), 0, 5, 1, 0);
+        addCell(grid, projectNameBox, 1, 5, 1, 1);
+        addCell(grid, createLabel("Source cells", 170), 0, 6, 1, 0);
+        addCell(grid, cellsBox, 1, 6, 1, 1);
 
         group.add(grid, BorderLayout.CENTER);
         return group;
@@ -403,6 +412,7 @@ final class MainWindow extends JFrame {
             updateCommandPreview();
         });
         onTextChanged(cellsBox, text -> updateCommandPreview());
+        onTextChanged(tbxConfigBox, text -> updateCommandPreview());
     }
 
     private void configureTooltips() {
@@ -414,7 +424,8 @@ final class MainWindow extends JFrame {
         String trash = OutputCleaner.trashName();
         workflowPresetBox.setToolTipText("Chooses a coherent set of source, output grid and extra exports.");
         sourceProfileBox.setToolTipText("Auto reads the lotheader size. v41 validates 300. B42 validates 256.");
-        targetGridBox.setToolTipText("300 keeps the classic WorldEd grid. 256 writes native Build 42-sized TMX cells in a native-256 WorldEd project.");
+        targetGridBox.setToolTipText("Auto keeps the source grid. Build 42 maps always export to native 256x256 cells "
+            + "in a native-256 WorldEd project; v41 maps can also be converted to 256.");
         cleanBox.setToolTipText("Asks for confirmation, then moves existing output contents to the " + trash + ".");
         imagesBox.setToolTipText("Writes per-cell and merged PNG map previews used by the map workflow.");
         tilePacksBox.setToolTipText("When selected alone, extracts tiles without reading lotheaders or lotpacks.");
@@ -423,6 +434,8 @@ final class MainWindow extends JFrame {
         buildingTbxBox.setToolTipText("Writes supplemental building TBX files under tbx_buildings/<source-cell>.");
         tbxOnlyBox.setToolTipText("Writes only TBX outputs. TMX, PZW and objects.lua are skipped.");
         cellsBox.setToolTipText("Optional filter such as 46_26,46_27. Empty exports all source cells.");
+        tbxConfigBox.setToolTipText("Folder holding BuildingTiles.txt, BuildingFurniture.txt and TMXConfig.txt from PZ_Mapping_Tools. "
+            + "Building TBX files are then rebuilt with rooms, walls, floors, doors, windows, stairs and furniture.");
         tilesBox.setToolTipText("Vanilla Project Zomboid media folder. This input is read only.");
         useModTilesBox.setToolTipText("Enable a second read-only asset source for modded .tiles and .pack files.");
         modTilesPathBox.setToolTipText("Prepared mod asset folder. Put .tiles here and .pack files under texturepacks or texturespack.");
@@ -440,12 +453,11 @@ final class MainWindow extends JFrame {
 
         isApplyingPreset = true;
         switch (workflowPresetBox.getSelectedIndex()) {
-            case 0 -> applyPreset(0, 0, true, true, true, true, false);
-            case 1 -> applyPreset(2, 0, true, true, true, true, false);
-            case 2 -> applyPreset(2, 1, true, true, true, true, false);
-            case 3 -> applyPreset(1, 0, true, true, true, true, false);
-            case 4 -> applyPreset(0, 0, true, true, false, false, false);
-            case 5 -> applyPreset(0, 0, false, false, true, true, true);
+            case 0 -> applyPreset(0, GRID_AUTO, true, true, true, true, false);
+            case 1 -> applyPreset(PROFILE_B42, GRID_256, true, true, true, true, false);
+            case 2 -> applyPreset(1, GRID_300, true, true, true, true, false);
+            case 3 -> applyPreset(0, GRID_AUTO, true, true, false, false, false);
+            case 4 -> applyPreset(0, GRID_AUTO, false, false, true, true, true);
             default -> {
             }
         }
@@ -525,9 +537,17 @@ final class MainWindow extends JFrame {
             appendLog("Source cells:   " + inspection.sourceCellCount());
             appendLog("Source sizes:   " + inspection.sourceSizes());
             appendLog("Levels:         " + inspection.levelRange());
+            appendLog("Output grid:    " + inspection.outputGrid());
             appendLog("TMX cells:      " + inspection.estimatedTargetCellCount());
             appendLog("Missing packs:  " + inspection.missingLotPackCount());
             appendLog("objects.lua:    " + (inspection.hasObjectsLua() ? "found" : "not found"));
+            if (options.exportBuildingTbx() && options.tbxConfigPath() != null) {
+                BuildingEdConfig buildingConfig = BuildingEdConfig.load(options.tbxConfigPath());
+                appendLog("BuildingEd:     " + buildingConfig.entryCount() + " tile entries, " + buildingConfig.furnitureCount()
+                    + " furniture (" + buildingConfig.directory() + ")");
+            } else {
+                appendLog("BuildingEd:     not set (building TBX files are plain tile dumps)");
+            }
             statusLabel.setText("Validation OK - " + inspection.sourceCellCount() + " source cell(s), "
                 + inspection.estimatedTargetCellCount() + " target TMX cell(s).");
         } catch (Exception ex) {
@@ -700,6 +720,11 @@ final class MainWindow extends JFrame {
             throw new IllegalStateException("TBX only requires RoomDef TBX and/or Building TBX to be enabled.");
         }
 
+        if (sourceProfileBox.getSelectedIndex() == PROFILE_B42 && targetGridBox.getSelectedIndex() == GRID_300) {
+            throw new IllegalStateException("Build 42 maps (256x256 cells) can only be exported to native 256x256 cells. "
+                + "Choose \"Native TMX 256 x 256\" or \"Auto\" as the output grid.");
+        }
+
         String tiles = Text.trim(tilesBox.getText());
         if (!Text.isNullOrWhiteSpace(tiles) && !Files.exists(Paths.get(tiles))) {
             throw new FileNotFoundException("Tiles/media path not found: " + tiles);
@@ -719,6 +744,11 @@ final class MainWindow extends JFrame {
             fullModTiles = ConverterOptions.fullPath(modTiles);
         }
 
+        String tbxConfig = Text.trim(tbxConfigBox.getText());
+        if (!Text.isNullOrWhiteSpace(tbxConfig) && !Files.isDirectory(Paths.get(tbxConfig))) {
+            throw new FileNotFoundException("BuildingEd config folder not found: " + tbxConfig);
+        }
+
         if (tilesOnly && Text.isNullOrWhiteSpace(tiles) && Text.isNullOrWhiteSpace(fullModTiles)) {
             throw new IllegalStateException("Tiles-only mode requires a Tiles/media or Mod assets path.");
         }
@@ -730,7 +760,7 @@ final class MainWindow extends JFrame {
             .tilesPath(Text.isNullOrWhiteSpace(tiles) ? null : ConverterOptions.fullPath(tiles))
             .modTilesPath(fullModTiles)
             .expectedSourceCellSize(getExpectedSourceCellSize())
-            .targetCellSize(targetGridBox.getSelectedIndex() == 1 ? 256 : 300)
+            .targetCellSize(getRequestedTargetCellSize())
             .cleanOutput(cleanBox.isSelected())
             .exportImages(imagesBox.isSelected() && !tbxOnlyBox.isSelected())
             .exportTilePacks(tilePacksBox.isSelected())
@@ -740,6 +770,7 @@ final class MainWindow extends JFrame {
             .tbxOnly(tbxOnlyBox.isSelected())
             .tilesOnly(tilesOnly)
             .includeCells(parseCells(cellsBox.getText()))
+            .tbxConfigPath(Text.isNullOrWhiteSpace(tbxConfig) ? null : ConverterOptions.fullPath(tbxConfig))
             .build();
     }
 
@@ -756,6 +787,7 @@ final class MainWindow extends JFrame {
         int sourceCellCount,
         String sourceSizes,
         String levelRange,
+        String outputGrid,
         int estimatedTargetCellCount,
         int missingLotPackCount,
         boolean hasObjectsLua) {
@@ -773,6 +805,7 @@ final class MainWindow extends JFrame {
 
         Collection<LotHeaderData> values = headers.values();
         MapConverter.validateSourceCellSize(options.expectedSourceCellSize(), values);
+        int targetCellSize = MapConverter.resolveTargetCellSize(options.targetCellSize(), values);
 
         int missingLotPacks = 0;
         TreeMap<Integer, Integer> sizes = new TreeMap<>();
@@ -795,7 +828,8 @@ final class MainWindow extends JFrame {
             headers.size(),
             String.join(", ", sourceSizes),
             minLevel + ".." + maxLevel,
-            MapConverter.estimateTargetCellCount(values, options.targetCellSize()),
+            targetCellSize + "x" + targetCellSize + (options.targetCellSize() == null ? " (auto)" : ""),
+            MapConverter.estimateTargetCellCount(values, targetCellSize),
             missingLotPacks,
             Files.isRegularFile(Paths.get(options.inputDirectory(), "objects.lua")));
     }
@@ -828,10 +862,17 @@ final class MainWindow extends JFrame {
                 addArg(args, "--source-cell-size", sourceCellSize.toString());
             }
 
-            addArg(args, "--target-cell-size", targetGridBox.getSelectedIndex() == 1 ? "256" : "300");
+            Integer targetCellSize = getRequestedTargetCellSize();
+            if (targetCellSize != null) {
+                addArg(args, "--target-cell-size", targetCellSize.toString());
+            }
 
             if (!Text.isNullOrWhiteSpace(cellsBox.getText())) {
                 addArg(args, "--cells", Text.trim(cellsBox.getText()));
+            }
+
+            if (buildingTbxBox.isSelected()) {
+                addArg(args, "--tbx-config", Text.trim(tbxConfigBox.getText()));
             }
         }
 
@@ -934,6 +975,15 @@ final class MainWindow extends JFrame {
     private static String sanitizeProjectName(String value) {
         String sanitized = Text.sanitizeFileName(value);
         return Text.isNullOrWhiteSpace(sanitized) ? ConverterOptions.DEFAULT_PROJECT_NAME : sanitized;
+    }
+
+    /** The selected output grid, or {@code null} for auto (match the source grid). */
+    private Integer getRequestedTargetCellSize() {
+        return switch (targetGridBox.getSelectedIndex()) {
+            case GRID_300 -> 300;
+            case GRID_256 -> 256;
+            default -> null;
+        };
     }
 
     private Integer getExpectedSourceCellSize() {

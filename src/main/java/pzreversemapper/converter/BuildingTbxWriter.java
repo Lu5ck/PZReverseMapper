@@ -21,12 +21,31 @@ final class BuildingTbxWriter {
     private final String outputDirectory;
     private final int cellSize;
     private final Map<CellCoord, TargetCell> targetCells;
+    private final TbxReconstructor reconstructor;
+    private final TbxReconstructor.Stats stats = new TbxReconstructor.Stats();
+    private final Map<CellCoord, Map<Integer, List<TileLayer>>> stackLayers = new HashMap<>();
     private List<LayerKey> allLayerKeys;
+    private int reconstructedCount;
 
     BuildingTbxWriter(String outputDirectory, int cellSize, Map<CellCoord, TargetCell> targetCells) {
+        this(outputDirectory, cellSize, targetCells, null);
+    }
+
+    /** With a BuildingEd config, buildings are rebuilt as proper BuildingEd buildings instead of tile dumps. */
+    BuildingTbxWriter(String outputDirectory, int cellSize, Map<CellCoord, TargetCell> targetCells, BuildingEdConfig config) {
         this.outputDirectory = outputDirectory;
         this.cellSize = cellSize;
         this.targetCells = targetCells;
+        this.reconstructor = config == null ? null : new TbxReconstructor(config);
+    }
+
+    /** Totals over all rebuilt buildings (only meaningful with a BuildingEd config). */
+    TbxReconstructor.Stats stats() {
+        return stats;
+    }
+
+    int reconstructedCount() {
+        return reconstructedCount;
     }
 
     int write(Collection<LotHeaderData> headers) throws IOException {
@@ -50,7 +69,12 @@ final class BuildingTbxWriter {
                     continue;
                 }
 
-                writeBuilding(header, building, rooms);
+                if (reconstructor != null) {
+                    writeReconstructed(header, building, rooms);
+                } else {
+                    writeBuilding(header, building, rooms);
+                }
+
                 count++;
             }
         }
@@ -145,6 +169,64 @@ final class BuildingTbxWriter {
 
             writer.writeLine("</building>");
         }
+    }
+
+    private void writeReconstructed(LotHeaderData header, BuildingDef building, List<RoomRect> rooms) throws IOException {
+        TbxReconstructor.Result result = reconstructor.reconstruct(rooms, this::stack, 4);
+        TbxModel.Building model = result.building();
+        String sourceCellName = header.cellX() + "_" + header.cellY();
+        model.properties.put("WorldX", Integer.toString(result.originX()));
+        model.properties.put("WorldY", Integer.toString(result.originY()));
+        model.properties.put("WorldZ", Integer.toString(result.baseLevel()));
+        model.properties.put("SourceCell", sourceCellName);
+        model.properties.put("SourceBuilding", Integer.toString(building.sourceBuildingId()));
+
+        Path directory = Paths.get(outputDirectory, "tbx_buildings", sourceCellName);
+        Files.createDirectories(directory);
+        String fileName = String.format(java.util.Locale.ROOT, "%s_b%04d_%s_%d_%d.tbx",
+            sourceCellName, building.sourceBuildingId(), sanitizeFileName(model.rooms.get(0).internalName),
+            result.originX(), result.originY());
+        TbxXmlWriter.write(model, directory.resolve(fileName));
+        stats.add(result.stats());
+        reconstructedCount++;
+    }
+
+    /** The compiled tile stack of a world square, bottom to top. */
+    private List<String> stack(int worldX, int worldY, int level) {
+        CellCoord coord = new CellCoord(BinaryHelpers.floorDiv(worldX, cellSize), BinaryHelpers.floorDiv(worldY, cellSize));
+        TargetCell cell = targetCells.get(coord);
+        if (cell == null) {
+            return List.of();
+        }
+
+        List<TileLayer> layers = stackLayers
+            .computeIfAbsent(coord, ignored -> new HashMap<>())
+            .computeIfAbsent(level, ignored -> {
+                List<LayerKey> keys = new ArrayList<>();
+                for (LayerKey key : cell.tilesByLayer().keySet()) {
+                    if (key.floor() == level) {
+                        keys.add(key);
+                    }
+                }
+
+                keys.sort(LayerKey.ORDER);
+                List<TileLayer> ordered = new ArrayList<>();
+                for (LayerKey key : keys) {
+                    ordered.add(cell.tilesByLayer().get(key));
+                }
+
+                return ordered;
+            });
+        int index = BinaryHelpers.positiveMod(worldX, cellSize) + BinaryHelpers.positiveMod(worldY, cellSize) * cellSize;
+        List<String> stack = new ArrayList<>(layers.size());
+        for (TileLayer layer : layers) {
+            String tile = layer.get(index);
+            if (tile != null) {
+                stack.add(tile);
+            }
+        }
+
+        return stack;
     }
 
     private static int minFloor(List<RoomRect> rooms) {

@@ -19,7 +19,7 @@ public final class ConverterOptions {
     private final String tilesPath;
     private final String modTilesPath;
     private final Integer expectedSourceCellSize;
-    private final int targetCellSize;
+    private final Integer targetCellSize;
     private final boolean cleanOutput;
     private boolean cleanOutputConfirmed;
     private final boolean exportImages;
@@ -30,6 +30,7 @@ public final class ConverterOptions {
     private final boolean tbxOnly;
     private final boolean tilesOnly;
     private final Set<CellCoord> includeCells;
+    private final String tbxConfigPath;
 
     private ConverterOptions(Builder builder) {
         if (builder.inputDirectory == null || builder.outputDirectory == null) {
@@ -52,6 +53,7 @@ public final class ConverterOptions {
         tbxOnly = builder.tbxOnly;
         tilesOnly = builder.tilesOnly;
         includeCells = builder.includeCells == null ? null : Collections.unmodifiableSet(new LinkedHashSet<>(builder.includeCells));
+        tbxConfigPath = builder.tbxConfigPath;
     }
 
     public static Builder builder() {
@@ -82,7 +84,8 @@ public final class ConverterOptions {
         return expectedSourceCellSize;
     }
 
-    public int targetCellSize() {
+    /** Requested output cell size, or {@code null} to match the source grid (see {@link MapConverter#resolveTargetCellSize}). */
+    public Integer targetCellSize() {
         return targetCellSize;
     }
 
@@ -131,6 +134,14 @@ public final class ConverterOptions {
         return includeCells;
     }
 
+    /**
+     * Folder with the BuildingEd config files (BuildingTiles.txt, BuildingFurniture.txt, TMXConfig.txt)
+     * from PZ_Mapping_Tools, used to rebuild building TBX files; {@code null} for the plain tile dump.
+     */
+    public String tbxConfigPath() {
+        return tbxConfigPath;
+    }
+
     /** The vanilla tiles path followed by the optional mod assets path. */
     public List<String> enumerateTilesAssetPaths() {
         List<String> paths = new ArrayList<>(2);
@@ -167,7 +178,7 @@ public final class ConverterOptions {
         String tiles = null;
         String modTiles = null;
         Integer expectedSourceCellSize = null;
-        int targetCellSize = 300;
+        Integer targetCellSize = null;
         boolean clean = false;
         boolean exportImages = true;
         boolean exportTilePacks = false;
@@ -177,6 +188,7 @@ public final class ConverterOptions {
         boolean tbxOnly = false;
         boolean tilesOnly = false;
         Set<CellCoord> includeCells = null;
+        String tbxConfig = null;
 
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
@@ -187,12 +199,17 @@ public final class ConverterOptions {
                 case "--tiles", "-t" -> tiles = args[nextIndex(args, i++, arg)];
                 case "--mod-tiles", "--mod-media" -> modTiles = args[nextIndex(args, i++, arg)];
                 case "--target-cell-size" -> {
-                    Integer value = Text.tryParseInt(args[nextIndex(args, i++, arg)]);
-                    if (value == null || value <= 0) {
-                        throw new IllegalArgumentException("--target-cell-size must be a positive integer");
-                    }
+                    String text = args[nextIndex(args, i++, arg)];
+                    if (Text.trim(text).equalsIgnoreCase("auto")) {
+                        targetCellSize = null;
+                    } else {
+                        Integer value = Text.tryParseInt(text);
+                        if (value == null || value <= 0) {
+                            throw new IllegalArgumentException("--target-cell-size must be auto or a positive integer");
+                        }
 
-                    targetCellSize = value;
+                        targetCellSize = value;
+                    }
                 }
                 case "--source-cell-size" -> {
                     Integer value = Text.tryParseInt(args[nextIndex(args, i++, arg)]);
@@ -203,6 +220,7 @@ public final class ConverterOptions {
                     expectedSourceCellSize = value;
                 }
                 case "--cells" -> includeCells = parseCells(args[nextIndex(args, i++, arg)]);
+                case "--tbx-config", "--buildinged-config" -> tbxConfig = args[nextIndex(args, i++, arg)];
                 case "--clean" -> clean = true;
                 case "--no-objects" -> exportObjects = false;
                 case "--no-images" -> exportImages = false;
@@ -252,6 +270,7 @@ public final class ConverterOptions {
             .tbxOnly(tbxOnly)
             .tilesOnly(tilesOnly)
             .includeCells(includeCells)
+            .tbxConfigPath(Text.isNullOrWhiteSpace(tbxConfig) ? null : fullPath(tbxConfig))
             .build();
     }
 
@@ -330,7 +349,8 @@ public final class ConverterOptions {
         out.println("  --mod-tiles <folder>           Optional mod asset root read after --tiles; alias: --mod-media");
         out.println("  --name <project-name>          PZW filename without extension (default: ConvertedMap)");
         out.println("  --source-cell-size <size>      Optional input validation, for example 300 or 256");
-        out.println("  --target-cell-size <size>      Output cell size (default: 300)");
+        out.println("  --target-cell-size <size>      Output cell size: auto (default, matches the source), 300 or 256;");
+        out.println("                                 Build 42 256x256 maps always stay 256");
         out.println("  --cells X_Y[,X_Y...]           Optional source-cell filter, for example 46_26,46_27");
         out.println("  --clean                        Move existing output contents to the Recycle Bin/Trash after confirmation");
         out.println("  --tbx-only                     Write TBX outputs only; skip TMX, PZW, and objects.lua");
@@ -340,6 +360,9 @@ public final class ConverterOptions {
         out.println("  --no-objects                   Do not import objects.lua into the PZW");
         out.println("  --no-room-tbx                  Do not write RoomDef TBX files");
         out.println("  --no-building-tbx              Do not write supplemental building TBX files");
+        out.println("  --tbx-config <folder>          BuildingEd config folder (BuildingTiles.txt, BuildingFurniture.txt,");
+        out.println("                                 TMXConfig.txt) from PZ_Mapping_Tools: rebuild building TBX files with");
+        out.println("                                 rooms, walls, floors, doors, windows, stairs and furniture");
         out.println("  --gui                          Start the Studio window");
     }
 
@@ -351,7 +374,7 @@ public final class ConverterOptions {
         private String tilesPath;
         private String modTilesPath;
         private Integer expectedSourceCellSize;
-        private int targetCellSize = 300;
+        private Integer targetCellSize;
         private boolean cleanOutput;
         private boolean exportImages = true;
         private boolean exportTilePacks;
@@ -361,6 +384,7 @@ public final class ConverterOptions {
         private boolean tbxOnly;
         private boolean tilesOnly;
         private Set<CellCoord> includeCells;
+        private String tbxConfigPath;
 
         private Builder() {
         }
@@ -395,7 +419,8 @@ public final class ConverterOptions {
             return this;
         }
 
-        public Builder targetCellSize(int value) {
+        /** Output cell size, or {@code null} for auto (match the source grid). */
+        public Builder targetCellSize(Integer value) {
             targetCellSize = value;
             return this;
         }
@@ -442,6 +467,11 @@ public final class ConverterOptions {
 
         public Builder includeCells(Set<CellCoord> value) {
             includeCells = value;
+            return this;
+        }
+
+        public Builder tbxConfigPath(String value) {
+            tbxConfigPath = value;
             return this;
         }
 

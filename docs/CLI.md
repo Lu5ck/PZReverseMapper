@@ -7,11 +7,11 @@ The converter ships in the same jar as Studio: run
 (with no arguments, the jar opens Studio). `--gui` opens Studio explicitly.
 
 It reads `.lotheader` and `world_X_Y.lotpack` files, supports old `300x300`
-cells and new POT/v42 `256x256` cells, then writes WorldEd-style `300x300`
-TMX cells plus a `.pzw` project file.
+cells and new POT/v42 `256x256` cells, then writes TMX cells plus a `.pzw`
+WorldEd project. Build 42 maps stay on their native `256x256` grid.
 
 If an `objects.lua` file is present in the input folder, objects are parsed and
-written back into the `.pzw` cells on the target `300x300` grid. Rectangle
+written back into the `.pzw` cells on the target grid. Rectangle
 objects, polygons, polylines, line width, and arbitrary object properties are
 preserved.
 
@@ -55,7 +55,15 @@ per-floor `<tiles layer="...">` grids for the tiles found inside the room
 bounds.
 
 Supplemental building-level TBX files are written under
-`tbx_buildings/<source-cell>/`. These group the lotheader building room ids into
+`tbx_buildings/<source-cell>/`. With `--tbx-config <folder>` (the BuildingEd
+config folder of PZ_Mapping_Tools, holding `BuildingTiles.txt`,
+`BuildingFurniture.txt` and `TMXConfig.txt`), each one is rebuilt as a real
+BuildingEd building: rooms, walls, trims, floors, ceilings, grime, doors,
+windows, curtains, shutters, stairs and furniture, chosen by majority vote
+against the config and checked by re-rendering with BuildingEd's layout rules.
+Tiles that cannot be reproduced stay as user-drawn tiles. Use `--tiles` too, so
+the grime and window rules can read the game's tile properties. Without
+`--tbx-config` the files are plain tile dumps, as in earlier versions: These group the lotheader building room ids into
 one file per compiled building, preserve room masks per floor, and crop the
 tiles through world coordinates. They are exported for inspection/reuse and are
 not yet wired back into the TMX RoomDefs.
@@ -77,7 +85,7 @@ java -jar PZReverseMapper-1.0.0.jar \
   --mod-tiles "D:\Path\To\PreparedModAssets" \
   --name "MyMap" \
   --source-cell-size 256 \
-  --target-cell-size 300 \
+  --tbx-config "D:\Path\To\PZ_Mapping_Tools" \
   --cells 46_26,46_27 \
   --clean
 ```
@@ -89,7 +97,7 @@ java -jar PZReverseMapper-1.0.0.jar \
   --input "D:\Path\To\CompiledMap" \
   --output "D:\Path\To\TBX_Only" \
   --source-cell-size 256 \
-  --target-cell-size 300 \
+  --tbx-config "D:\Path\To\PZ_Mapping_Tools" \
   --cells 46_26 \
   --tbx-only \
   --clean
@@ -143,8 +151,10 @@ least one tiles path, but no compiled-map input, and does not read lotheaders or
 lotpacks. Studio enables this mode automatically when Tile sheets is the only
 selected output.
 
-The output TMX grid is `300x300` by default. Use `--target-cell-size 256` when
-you want native Build 42-sized TMX cells instead. A 256 export writes
+The output grid is `auto` by default: Build 42 maps (`256x256` cells) export to
+native `256x256` TMX cells and v41 maps to `300x300` cells. Build 42 maps cannot
+be converted to `300x300`; asking for it is an error. Use
+`--target-cell-size 256` to reproject a v41 map to native cells. A 256 export writes
 `cellFormat="native-256"` on the `.pzw` `<world>` element, which is how WorldEd in
 PZ_Mapping_Tools recognises a native 256x256 project; without it the project
 would open as a legacy 300x300 world. WorldEd has no grid format for other
@@ -153,8 +163,8 @@ converted through world coordinates:
 
 ```text
 worldX = sourceCellX * sourceCellSize + localX
-targetCellX = worldX / 300
-targetLocalX = worldX % 300
+targetCellX = worldX / targetCellSize
+targetLocalX = worldX % targetCellSize
 ```
 
 Exit codes: `0` success, `1` usage error or cancelled clean, `2` failure.

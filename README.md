@@ -9,9 +9,9 @@ Zomboid map data. It provides a graphical Studio and a command-line converter,
 both shipped in a single cross-platform Java jar (Windows, macOS and Linux).
 
 The project supports legacy 300 × 300 compiled cells and Build 42 256 × 256
-compiled cells. Data is converted through world coordinates before being
-written to either classic 300 × 300 WorldEd cells or native 256 × 256 TMX
-cells.
+compiled cells. Build 42 maps stay on their native 256 × 256 grid and are
+written as native-256 WorldEd projects; legacy maps keep the classic 300 × 300
+grid and can optionally be reprojected to 256 × 256 through world coordinates.
 
 > PZ Reverse Mapper is an unofficial community tool. Project Zomboid,
 > WorldEd and TileZed are created by The Indie Stone. No game assets are
@@ -21,11 +21,17 @@ cells.
 
 - Rebuild TMX map cells and a WorldEd PZW project from `.lotheader` and
   `.lotpack` files.
-- Convert Build 42 256 × 256 compiled cells to the classic editable
-  300 × 300 WorldEd grid.
+- Keep Build 42 maps on their native 256 × 256 grid as native-256 WorldEd
+  projects. (Build 42 maps are never converted to 300 × 300.)
+- Optionally reproject legacy v41 300 × 300 maps to native 256 × 256 cells.
 - Preserve tile layers, rooms, buildings and level information.
 - Restore `objects.lua` objects in the generated PZW project.
 - Export RoomDef TBX files and supplemental reconstructed building TBX files.
+- With the BuildingEd config files from
+  [PZ_Mapping_Tools](https://github.com/Unjammer/PZ_Mapping_Tools), rebuild
+  building TBX files as real BuildingEd buildings: rooms, exterior and interior
+  walls, trims, floors, ceilings, grime, doors, windows, curtains, shutters,
+  stairs and furniture.
 - Generate per-cell and merged map, vegetation, biome and zombie-density
   previews when the corresponding source data exists.
 - Extract Project Zomboid texture packs without loading every atlas into RAM
@@ -100,16 +106,15 @@ java -jar PZReverseMapper-1.0.0.jar
 5. Use `Validate` before a map export.
 6. Run a small source-cell test before exporting a complete map.
 
-For Build 42 maps intended for WorldEd, use:
-
-```text
-B42 source 256 -> TMX 300
-```
-
-To keep the native Build 42 grid, use `B42 source 256 -> TMX 256`. That export
-marks the WorldEd project as `cellFormat="native-256"`, so
+The default output grid is `Auto`: Build 42 maps export to native 256 × 256
+cells and v41 maps to 300 × 300 cells. Build 42 exports mark the WorldEd project
+as `cellFormat="native-256"`, so
 [PZ_Mapping_Tools](https://github.com/Unjammer/PZ_Mapping_Tools) opens it as a
-native 256 × 256 project.
+native 256 × 256 project. Converting Build 42 maps to 300 × 300 is not
+supported.
+
+To get editable BuildingEd buildings, set `BuildingEd config` to the folder
+holding `BuildingTiles.txt` (see [Rebuilding BuildingEd buildings](#rebuilding-buildinged-buildings)).
 
 When `Tile sheets` is the only selected output, Studio automatically enters
 tiles-only mode. The compiled map input is not required and no `.lotheader` or
@@ -121,16 +126,16 @@ and unofficial-project status.
 
 ## Command-line examples
 
-Any argument switches the jar to the command-line converter. Build 42 to
-classic WorldEd cells:
+Any argument switches the jar to the command-line converter. A Build 42 map,
+with tile sheets and rebuilt BuildingEd buildings:
 
 ```bash
 java -jar PZReverseMapper-1.0.0.jar \
   --input "D:\Maps\CompiledMap" \
   --output "D:\Exports\EditableMap" \
   --tiles "C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid\media" \
+  --tbx-config "D:\Tools\PZ_Mapping_Tools" \
   --source-cell-size 256 \
-  --target-cell-size 300 \
   --extract-tiles
 ```
 
@@ -157,12 +162,40 @@ out of memory, give it a larger heap, for example:
 java -Xmx12g -jar PZReverseMapper-1.0.0.jar --input ... --output ...
 ```
 
+## Rebuilding BuildingEd buildings
+
+Compiled maps only keep the final tiles of each square, so a plain export can
+only store a building as raw tiles. Given the BuildingEd configuration of
+PZ_Mapping_Tools (`--tbx-config <folder>` or `BuildingEd config` in Studio: the
+folder holding `BuildingTiles.txt`, `BuildingFurniture.txt` and
+`TMXConfig.txt`; a PZ_Mapping_Tools checkout or install folder also works), each
+compiled building is rebuilt as a proper BuildingEd building:
+
+- Rooms come from the compiled RoomDefs, floor by floor.
+- BuildingEd's own wall rules decide which walls each room and the building's
+  exterior draw. For each of them, the tile entry is chosen by majority vote
+  among the BuildingTiles entries matching the compiled tiles. The same vote
+  picks each room's floor, ceiling, wall trim and grime, and the building's
+  exterior wall, trim and grime.
+- Door and window wall variants become door and window objects with their
+  frames, curtains and shutters; stair runs become stairs; furniture is matched
+  against BuildingFurniture, largest pieces first.
+- The rebuilt building is rendered again with a Java port of BuildingEd's
+  layout rules and compared with the compiled tiles. Anything not reproduced is
+  kept as user-drawn tiles, so nothing is lost. The console reports how much
+  was reproduced.
+
+Pass `--tiles <media>` as well: BuildingEd's grime and window rules read tile
+properties from the game's `.tiles` files. Roofs and wall-layer furniture are
+kept as user-drawn tiles (the building's default roof style is still set).
+
 ## Main outputs
 
 - `tmx/*.tmx` — editable map cells
 - `<project>.pzw` — WorldEd project (marked `native-256` for 256 × 256 exports)
 - `tmx/tbx/<cell>/*.tbx` — RoomDef TBX files
-- `tbx_buildings/<source-cell>/*.tbx` — supplemental reconstructed buildings
+- `tbx_buildings/<source-cell>/*.tbx` — one TBX per compiled building: a
+  rebuilt BuildingEd building with `--tbx-config`, otherwise a plain tile dump
 - `maps_img/*` — per-cell previews
 - `Map.png`, `Map_veg.png`, `world.png` — merged map previews
 - `Map_ZombieSpawnMap.png` — zombie-density preview when available
@@ -229,7 +262,8 @@ macOS and Linux and keeps the jar as a downloadable build artifact.
   system offers no trash, the clean is refused and nothing is removed.
 - Reverse-engineered formats can change between Project Zomboid builds.
 - Reconstructed building TBX files are supplemental exports, not original
-  authoring-source files.
+  authoring-source files. Properties that leave no trace in compiled data
+  (for example a ceiling hidden under the floor above) cannot be recovered.
 - Always validate a small area before processing a complete map.
 
 ## License and credits

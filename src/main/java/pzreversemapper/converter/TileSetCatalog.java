@@ -26,7 +26,14 @@ final class TileSetCatalog {
     private final Set<String> definitionOrderKeys = new HashSet<>();
     private final Set<String> observedTileNames = new HashSet<>();
     private final Map<String, Integer> gidCache = new HashMap<>();
+    /** Tile name to the game properties BuildingEd's grime and window rules read. */
+    private final Map<String, Map<String, String>> tileProperties = new HashMap<>();
     private boolean built;
+
+    /** Property names kept from .tiles files (used to rebuild BuildingEd TBX files). */
+    private static final Set<String> KEPT_PROPERTIES = Set.of(
+        "GrimeType", "WallW", "WallN", "WallNW", "WallSE", "DoorWallW", "DoorWallN", "WallWTrans", "WallNTrans",
+        "windowW", "windowN", "WindowShape");
 
     private static final class ObservedSheet {
         private final String name;
@@ -94,6 +101,10 @@ final class TileSetCatalog {
         for (Path file : files) {
             loadTilesFile(file, overrideExisting);
         }
+    }
+
+    Map<String, Map<String, String>> tileProperties() {
+        return tileProperties;
     }
 
     void observe(String tileName) {
@@ -228,8 +239,11 @@ final class TileSetCatalog {
                 for (int tile = 0; tile < tileCount; tile++) {
                     int propertyCount = reader.readInt();
                     for (int prop = 0; prop < propertyCount; prop++) {
-                        reader.readLineString();
-                        reader.readLineString();
+                        String key = reader.readLineString();
+                        String value = reader.readLineString();
+                        if (name != null && KEPT_PROPERTIES.contains(key)) {
+                            tileProperties.computeIfAbsent(name + "_" + tile, ignored -> new HashMap<>(4)).put(key, value);
+                        }
                     }
                 }
             }

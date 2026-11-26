@@ -42,30 +42,36 @@ class MapConverterTest {
             .projectName("Synthetic")
             .tilesPath(fixture.resolve("media").toString())
             .modTilesPath(fixture.resolve("modmedia").toString())
-            .expectedSourceCellSize(256)
-            .targetCellSize(300);
+            .expectedSourceCellSize(256);
+    }
+
+    private ConverterOptions.Builder v41Options() {
+        return ConverterOptions.builder()
+            .inputDirectory(fixture.resolve("map41").toString())
+            .outputDirectory(output.toString())
+            .expectedSourceCellSize(300);
     }
 
     @Test
-    void b42SourceIsReprojectedToClassicGrid() throws Exception {
+    void b42SourceStaysOnTheNativeGrid() throws Exception {
         ConversionResult result = new MapConverter(b42Options().build()).run();
 
         assertEquals(3, result.sourceCellCount());
-        // World x 256..1023, y 256..511 -> target cells 0..3 x 0..1.
-        assertEquals(8, result.targetCellCount());
+        // Source cells 1_1, 2_1 and 3_1 map one-to-one onto native 256x256 cells.
+        assertEquals(3, result.targetCellCount());
         try (Stream<Path> tmxFiles = Files.list(output.resolve("tmx"))) {
-            assertEquals(8, tmxFiles.filter(p -> p.toString().endsWith(".tmx")).count());
+            assertEquals(3, tmxFiles.filter(p -> p.toString().endsWith(".tmx")).count());
         }
         assertTrue(Files.isRegularFile(output.resolve("Synthetic.pzw")));
         assertTrue(result.tbxCount() > 0);
         assertEquals(6, result.buildingTbxCount(), "3 buildings with rooms in each of two source cells");
-        assertEquals(8 * 3 + 3 + 1, result.imageCount() - 1, "per-cell images, merged images, zombie map (+ biome map)");
+        assertEquals(3 * 3 + 3 + 1, result.imageCount() - 1, "per-cell images, merged images, zombie map (+ biome map)");
         assertTrue(Files.isRegularFile(output.resolve("biomemap.png")));
         assertTrue(Files.isRegularFile(output.resolve("Map_ZombieSpawnMap.png")));
 
         PngImage world = PngImage.load(output.resolve("world.png"));
-        assertEquals(4 * 300, world.width());
-        assertEquals(2 * 300, world.height());
+        assertEquals(3 * 256, world.width());
+        assertEquals(256, world.height());
 
         PngImage biome = PngImage.load(output.resolve("biomemap.png"));
         assertEquals(48, biome.width());
@@ -78,19 +84,27 @@ class MapConverterTest {
             parse(file);
         }
 
-        String tmx = Files.readString(output.resolve("tmx/1_0.tmx"), StandardCharsets.UTF_8);
-        assertTrue(tmx.contains("<map version=\"2.0\" orientation=\"levelisometric\" width=\"300\" height=\"300\""));
+        String tmx = Files.readString(output.resolve("tmx/1_1.tmx"), StandardCharsets.UTF_8);
+        assertTrue(tmx.contains("<map version=\"2.0\" orientation=\"levelisometric\" width=\"256\" height=\"256\""));
         assertTrue(tmx.contains("\r\n"), "CRLF line endings");
-        // The basement room (source 1_1 local 200..239) lands in world 456..495 -> target cell 1_1.
-        String basementCell = Files.readString(output.resolve("tmx/1_1.tmx"), StandardCharsets.UTF_8);
-        assertTrue(basementCell.contains("<layer name=\"Floor\" level=\"-1\""), "basement level is kept");
-        assertTrue(basementCell.contains("<objectgroup name=\"RoomDefs\" level=\"-1\""), "basement RoomDefs are kept");
-        assertTrue(tmx.contains("type=\".\\tbx\\1_0\\"), "RoomDef objects reference their TBX");
+        assertTrue(tmx.contains("<layer name=\"Floor\" level=\"-1\""), "basement level is kept");
+        assertTrue(tmx.contains("<objectgroup name=\"RoomDefs\" level=\"-1\""), "basement RoomDefs are kept");
+        assertTrue(tmx.contains("type=\".\\tbx\\1_1\\"), "RoomDef objects reference their TBX");
+    }
+
+    @Test
+    void build42MapsCannotBeConvertedToTheClassicGrid() {
+        InvalidDataException error = assertThrows(InvalidDataException.class,
+            () -> new MapConverter(b42Options().targetCellSize(300).build()).run());
+        assertTrue(error.getMessage().contains("can only be exported to native 256x256 cells"), error.getMessage());
+        assertThrows(InvalidDataException.class,
+            () -> new MapConverter(b42Options().expectedSourceCellSize(null).targetCellSize(300).build()).run());
+        assertFalse(Files.exists(output.resolve("tmx/1_1.tmx")), "nothing is written");
     }
 
     @Test
     void nativeGridExportIsMarkedAsNative256ForWorldEd() throws Exception {
-        new MapConverter(b42Options().targetCellSize(256).exportImages(false).build()).run();
+        new MapConverter(b42Options().exportImages(false).build()).run();
 
         Element world = parse(output.resolve("Synthetic.pzw")).getDocumentElement();
         assertEquals("native-256", world.getAttribute("cellFormat"), "WorldEd reads the cell grid from this attribute");
@@ -113,18 +127,36 @@ class MapConverterTest {
 
     @Test
     void classicGridExportKeepsTheLegacyWorldHeader() throws Exception {
-        new MapConverter(b42Options().exportImages(false).build()).run();
-        Element world = parse(output.resolve("Synthetic.pzw")).getDocumentElement();
+        new MapConverter(v41Options().exportImages(false).build()).run();
+        Element world = parse(output.resolve("ConvertedMap.pzw")).getDocumentElement();
         assertFalse(world.hasAttribute("cellFormat"), "no attribute means legacy-300, as in the original converter");
-        assertTrue(Files.readString(output.resolve("Synthetic.pzw"), StandardCharsets.UTF_8)
-            .contains("<world version=\"1.0\" width=\"4\" height=\"2\">\r\n"));
+        assertTrue(Files.readString(output.resolve("ConvertedMap.pzw"), StandardCharsets.UTF_8)
+            .contains("<world version=\"1.0\" width=\"1\" height=\"1\">\r\n"));
     }
 
     @Test
-    void tileGidsMatchTilesetsAndReprojection() throws Exception {
+    void legacyMapsCanBeReprojectedToTheNativeGrid() throws Exception {
+        ConversionResult result = new MapConverter(v41Options().targetCellSize(256).exportImages(false).build()).run();
+
+        // Source cell 10_10 covers world 3000..3299 -> native cells 11..12 on both axes.
+        assertEquals(4, result.targetCellCount());
+        Element world = parse(output.resolve("ConvertedMap.pzw")).getDocumentElement();
+        assertEquals("native-256", world.getAttribute("cellFormat"));
+        assertEquals("11,11", ((Element) world.getElementsByTagName("worldOrigin").item(0)).getAttribute("origin"));
+
+        // World (3000, 3000) is source local (0, 0) and native cell 11_11 local (184, 184).
+        Document tmx = parse(output.resolve("tmx/11_11.tmx"));
+        String[] values = findLayer(tmx, "Floor", "0").getTextContent().trim().split("[,\\s]+");
+        assertEquals(256 * 256, values.length);
+        assertEquals("0", values[0], "world (2816, 2816) has no source cell");
+        assertTrue(Integer.parseInt(values[184 + 184 * 256]) > 0, "reprojected ground tile present");
+    }
+
+    @Test
+    void tileGidsMatchTilesets() throws Exception {
         new MapConverter(b42Options().exportImages(false).build()).run();
 
-        Document tmx = parse(output.resolve("tmx/0_0.tmx"));
+        Document tmx = parse(output.resolve("tmx/1_1.tmx"));
         NodeList tilesets = tmx.getElementsByTagName("tileset");
         assertTrue(tilesets.getLength() > 5);
         java.util.Map<String, Integer> firstGids = new java.util.HashMap<>();
@@ -146,13 +178,9 @@ class MapConverterTest {
         assertTrue(firstGids.containsKey("jumbo_tree_01"), "sheets without .tiles metadata are inferred from tile names");
         assertTrue(!firstGids.containsKey("no_suffix") && !firstGids.containsKey("badname"), "names without a numeric id are ignored");
 
-        // Source cell 1_1 starts at world (256, 256): target cell 0_0 local (256, 256) holds its local (0, 0).
-        Element floor = findLayer(tmx, "Floor", "0");
-        String[] values = floor.getTextContent().trim().split("[,\\s]+");
-        assertEquals(300 * 300, values.length);
-        assertEquals("0", values[0], "world (0,0) has no source cell");
-        int sourceGid = Integer.parseInt(values[256 + 256 * 300]);
-        assertTrue(sourceGid > 0, "reprojected ground tile present");
+        String[] values = findLayer(tmx, "Floor", "0").getTextContent().trim().split("[,\\s]+");
+        assertEquals(256 * 256, values.length);
+        assertTrue(Integer.parseInt(values[0]) > 0, "source local (0,0) lands on native local (0,0)");
     }
 
     @Test
@@ -166,18 +194,22 @@ class MapConverterTest {
             names.add(object.getAttribute("name"));
             if (object.getAttribute("name").equals("Spawn")) {
                 Element cell = (Element) object.getParentNode();
-                assertEquals("tmx/1_0.tmx", cell.getAttribute("map"));
-                assertEquals("20", object.getAttribute("x"));
-                assertEquals("270", object.getAttribute("y"));
+                assertEquals("tmx/1_1.tmx", cell.getAttribute("map"));
+                assertEquals("64", object.getAttribute("x"));
+                assertEquals("14", object.getAttribute("y"));
                 assertEquals(4, object.getElementsByTagName("property").getLength());
             }
 
             if (object.getAttribute("name").equals("river")) {
-                // Anchored on its first point (260, 300) -> cell 0_1; points become cell-local.
-                assertEquals("tmx/0_1.tmx", ((Element) object.getParentNode()).getAttribute("map"));
+                // Anchored on its first point (260, 300) -> cell 1_1; points become cell-local.
+                assertEquals("tmx/1_1.tmx", ((Element) object.getParentNode()).getAttribute("map"));
                 assertEquals("polyline", object.getAttribute("geometry"));
                 assertEquals("2", object.getAttribute("linewidth"));
-                assertEquals("260,0 400,20 650,30", object.getAttribute("points"));
+                assertEquals("4,44 144,64 394,74", object.getAttribute("points"));
+            }
+
+            if (object.getAttribute("name").equals("zone")) {
+                assertEquals("tmx/2_1.tmx", ((Element) object.getParentNode()).getAttribute("map"));
             }
 
             if (object.getAttribute("type").equals("LootZone")) {
@@ -196,12 +228,7 @@ class MapConverterTest {
 
     @Test
     void v41SourceWritesClassicLayerNames() throws Exception {
-        ConverterOptions options = ConverterOptions.builder()
-            .inputDirectory(fixture.resolve("map41").toString())
-            .outputDirectory(output.toString())
-            .expectedSourceCellSize(300)
-            .build();
-        ConversionResult result = new MapConverter(options).run();
+        ConversionResult result = new MapConverter(v41Options().build()).run();
         assertEquals(1, result.sourceCellCount());
         assertEquals(1, result.targetCellCount());
         String tmx = Files.readString(output.resolve("tmx/10_10.tmx"));
@@ -217,8 +244,8 @@ class MapConverterTest {
             .includeCells(Set.of(new CellCoord(1, 1))).build()).run();
         assertEquals(1, result.sourceCellCount());
         assertEquals("", result.projectFile());
-        assertFalse(Files.exists(output.resolve("tmx/0_0.tmx")));
-        assertTrue(Files.isDirectory(output.resolve("tmx/tbx/0_0")));
+        assertFalse(Files.exists(output.resolve("tmx/1_1.tmx")));
+        assertTrue(Files.isDirectory(output.resolve("tmx/tbx/1_1")));
         assertTrue(Files.isDirectory(output.resolve("tbx_buildings/1_1")));
         assertFalse(Files.exists(output.resolve("biomemap.png")));
     }

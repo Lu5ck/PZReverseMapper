@@ -22,6 +22,8 @@ class ConverterOptionsTest {
         assertEquals("Kentucky", options.projectName());
         assertEquals(256, options.expectedSourceCellSize());
         assertEquals(300, options.targetCellSize());
+        assertNull(ConverterOptions.parse(new String[] {"-i", "a", "-o", "b"}).targetCellSize(), "auto by default");
+        assertNull(ConverterOptions.parse(new String[] {"-i", "a", "-o", "b", "--target-cell-size", "AUTO"}).targetCellSize());
         assertEquals(Set.of(new CellCoord(46, 26), new CellCoord(46, 27), new CellCoord(-1, 3)), options.includeCells());
         assertTrue(options.cleanOutput());
         assertFalse(options.exportImages());

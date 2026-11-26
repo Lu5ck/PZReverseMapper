@@ -69,18 +69,18 @@ final class GuideDialog extends JDialog {
         bullet(guide, "v41 source 300 and B42 source 256 are validation modes. They stop the export if the selected source does not match the expected compiled-cell size.");
 
         section(guide, "2. Output grid");
-        bullet(guide, "WorldEd TMX 300x300 is the classic editable map workflow and remains the default.");
-        bullet(guide, "Native TMX 256x256 keeps output cells aligned to Build 42 boundaries, and marks the PZW as a native-256 WorldEd project so PZ_Mapping_Tools opens it with 256x256 cells.");
+        bullet(guide, "Auto (the default) keeps the source grid: Build 42 maps export to native 256x256 cells and v41 maps to the classic 300x300 WorldEd grid.");
+        bullet(guide, "Build 42 is the current format, so its 256x256 cells are never converted to 300x300. They are written as a native-256 WorldEd project that PZ_Mapping_Tools opens with 256x256 cells.");
+        bullet(guide, "v41 maps can optionally be converted to native 256x256 cells with the Native TMX 256x256 grid.");
 
         section(guide, "3. Reprojection rule");
         body(guide, "Tiles, rooms and objects are reprojected through world coordinates before they are written to the target grid.");
         code(guide, "worldX = sourceCellX * sourceCellSize + localX\ntargetCellX = floor(worldX / targetCellSize)\ntargetLocalX = worldX mod targetCellSize");
-        body(guide, "That is what allows compiled 256x256 Build 42 cells to be rebuilt into 300x300 TMX cells.");
+        body(guide, "That is what allows legacy 300x300 v41 cells to be rebuilt as native 256x256 TMX cells.");
 
         section(guide, "4. Presets");
-        bullet(guide, "Initial export - auto to 300: safest default; preserves the original 300x300 editable workflow.");
-        bullet(guide, "B42 source 256 -> TMX 300: recommended for rebuilding compiled Build 42 maps into the classic WorldEd grid.");
-        bullet(guide, "B42 source 256 -> TMX 256: keeps the output grid native to Build 42.");
+        bullet(guide, "Initial export - auto grid: safest default; every map keeps its own grid.");
+        bullet(guide, "B42 source 256 -> TMX 256: Build 42 maps with source-size validation.");
         bullet(guide, "v41 source 300 -> TMX 300: legacy workflow with source-size validation.");
         bullet(guide, "Map only - no TBX: writes TMX/PZW and objects, but skips RoomDef and building TBX extras.");
         bullet(guide, "TBX only - rooms/buildings: writes only RoomDef TBX and supplemental building TBX outputs.");
@@ -93,6 +93,7 @@ final class GuideDialog extends JDialog {
         bullet(guide, "The mod asset folder is loaded after Tiles/media, so it can add custom sheets or replace matching sheet metadata without polluting the game media folder.");
         code(guide, "MyModAssets/\n  my_tiles.tiles\n  texturepacks/\n    my_pack.pack");
         body(guide, "A texture pack folder named texturespack is also accepted for existing prepared folders.");
+        bullet(guide, "BuildingEd config is optional. Point it at the PZ_Mapping_Tools folder holding BuildingTiles.txt, BuildingFurniture.txt and TMXConfig.txt to rebuild building TBX files as real BuildingEd buildings.");
 
         section(guide, "6. Output options");
         bullet(guide, "Clean output folder: asks for confirmation, then moves existing output contents to the " + OutputCleaner.trashName()
@@ -103,7 +104,9 @@ final class GuideDialog extends JDialog {
         bullet(guide, "When Tile sheets is the only selected output, Studio uses tiles-only mode and does not read lotheaders or lotpacks.");
         bullet(guide, "Objects: reads objects.lua and writes visible WorldEd objects into the PZW project.");
         bullet(guide, "RoomDef TBX: writes one TBX per room under tmx/tbx/<cell>.");
-        bullet(guide, "Building TBX pack: writes reconstructed supplemental buildings under tbx_buildings/<source-cell>. These are useful for inspection or a separate building pack, but they are not original source TBX files.");
+        bullet(guide, "Building TBX pack: writes one TBX per compiled building under tbx_buildings/<source-cell>. Without a BuildingEd config these are plain tile dumps.");
+        bullet(guide, "With a BuildingEd config, each building is rebuilt with rooms, exterior and interior walls, trims, floors, ceilings, grime, doors, windows, curtains, shutters, stairs and furniture. Entries are chosen by majority vote against the config, the result is re-rendered with BuildingEd's layout rules, and any tile it cannot reproduce stays a user-drawn tile. The run log reports how much was reproduced.");
+        bullet(guide, "Also set Tiles/media for rebuilt buildings: BuildingEd's grime and window rules read the game's tile properties. Roofs and wall-layer furniture stay user-drawn tiles. Rebuilt TBX files are reconstructions, not the original source files.");
 
         section(guide, "7. Testing and validation");
         bullet(guide, "Use Source cells such as 46_26,46_27 to test a small area before launching a full export.");

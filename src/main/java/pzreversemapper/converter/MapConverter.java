@@ -21,6 +21,7 @@ public final class MapConverter {
     private final ConverterOptions options;
     private final Consumer<ConversionProgress> progress;
     private final Map<CellCoord, TargetCell> targetCells = new LinkedHashMap<>();
+    private int targetCellSize;
 
     public MapConverter(ConverterOptions options) {
         this(options, null);
@@ -57,7 +58,8 @@ public final class MapConverter {
 
         Collection<LotHeaderData> headerList = headers.values();
         validateSourceCellSize(headerList);
-        report("Headers", "Loaded " + headers.size() + " source cell(s)");
+        targetCellSize = resolveTargetCellSize(options.targetCellSize(), headerList);
+        report("Headers", "Loaded " + headers.size() + " source cell(s), output grid " + targetCellSize + "x" + targetCellSize);
 
         TileSetCatalog tileSets = new TileSetCatalog();
         report("Tiles", "Loading tile definitions");
@@ -65,6 +67,15 @@ public final class MapConverter {
         if (!Text.isNullOrWhiteSpace(options.modTilesPath())) {
             report("Tiles", "Loading modded tile definitions");
             tileSets.loadTilesPath(options.modTilesPath(), true);
+        }
+
+        BuildingEdConfig buildingConfig = null;
+        if (options.exportBuildingTbx() && !Text.isNullOrWhiteSpace(options.tbxConfigPath())) {
+            report("Building TBX", "Loading BuildingEd config");
+            buildingConfig = BuildingEdConfig.load(options.tbxConfigPath());
+            buildingConfig.setTileProperties(tileSets.tileProperties());
+            report("Building TBX", "BuildingEd config: " + buildingConfig.entryCount() + " tile entries, "
+                + buildingConfig.furnitureCount() + " furniture from " + buildingConfig.directory());
         }
 
         report("Tile images", options.exportTilePacks() ? "Extracting tilespack images" : "Skipping tilespack extraction");
@@ -80,16 +91,22 @@ public final class MapConverter {
         boolean writeObjects = options.exportObjects() && !options.tbxOnly();
         report("Objects", writeObjects ? "Reading objects.lua" : "Skipping objects.lua");
         List<MapObject> objects = writeObjects ? readObjects() : List.of();
-        BuildingTbxWriter buildingTbxWriter = new BuildingTbxWriter(options.outputDirectory(), options.targetCellSize(), targetCells);
-        report("Building TBX", options.exportBuildingTbx() ? "Writing building TBX pack" : "Skipping building TBX pack");
+        BuildingTbxWriter buildingTbxWriter = new BuildingTbxWriter(options.outputDirectory(), targetCellSize, targetCells, buildingConfig);
+        report("Building TBX", !options.exportBuildingTbx() ? "Skipping building TBX pack"
+            : buildingConfig != null ? "Rebuilding BuildingEd buildings" : "Writing building TBX pack");
         int buildingTbxCount = options.exportBuildingTbx() ? buildingTbxWriter.write(headerList) : 0;
+        if (buildingConfig != null) {
+            String summary = describeReconstruction(buildingTbxWriter);
+            report("TBX rebuild", summary);
+            System.out.println(summary);
+        }
         report("Tiles", "Finalizing tilesets");
         tileSets.build();
         boolean writeImages = options.exportImages() && !options.tbxOnly();
         report("Images", writeImages ? "Writing preview images" : "Skipping preview images");
         int imageCount = 0;
         if (writeImages) {
-            imageCount += new MapImageWriter(options.outputDirectory(), options.targetCellSize()).write(targetCells.values(), headerList);
+            imageCount += new MapImageWriter(options.outputDirectory(), targetCellSize).write(targetCells.values(), headerList);
             if (options.includeCells() == null) {
                 report("Images", "Checking B42 biomemap tiles");
                 imageCount += MapImageWriter.writeBiomeMapIfPresent(options.inputDirectory(), options.outputDirectory());
@@ -100,7 +117,7 @@ public final class MapConverter {
 
         TmxWriter tmxWriter = new TmxWriter(
             options.outputDirectory(),
-            options.targetCellSize(),
+            targetCellSize,
             tileSets,
             options.exportRoomTbx(),
             shouldWriteTmxLevelAttributes(headerList));
@@ -123,12 +140,12 @@ public final class MapConverter {
             pzwFile = "";
         } else {
             report("PZW", "Writing WorldEd project");
-            if (!PzwWriter.isWorldEdCellSize(options.targetCellSize())) {
+            if (!PzwWriter.isWorldEdCellSize(targetCellSize)) {
                 System.out.println("Warning: WorldEd only supports 300x300 (legacy-300) and 256x256 (native-256) cells; "
-                    + "the " + options.targetCellSize() + "x" + options.targetCellSize() + " project will open as legacy-300.");
+                    + "the " + targetCellSize + "x" + targetCellSize + " project will open as legacy-300.");
             }
 
-            PzwWriter.write(pzwFile, options.projectName(), targetCells.keySet(), objects, options.targetCellSize());
+            PzwWriter.write(pzwFile, options.projectName(), targetCells.keySet(), objects, targetCellSize);
         }
 
         Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
@@ -202,6 +219,15 @@ public final class MapConverter {
         }
     }
 
+    private static String describeReconstruction(BuildingTbxWriter writer) {
+        TbxReconstructor.Stats stats = writer.stats();
+        int total = stats.buildingTiles();
+        String percent = total == 0 ? "100" : String.format(java.util.Locale.ROOT, "%.1f", stats.reproduced * 100.0 / total);
+        return "Rebuilt " + writer.reconstructedCount() + " building(s): " + percent + "% of " + total + " building tiles reproduced ("
+            + stats.userTiles + " kept as user tiles, " + stats.unmatched + " not reproduced, " + stats.extra + " extra); "
+            + stats.doors + " doors, " + stats.windows + " windows, " + stats.stairs + " stairs, " + stats.furniture + " furniture";
+    }
+
     /** Formats like the original {@code m:ss} / {@code h:mm:ss} output. */
     public static String formatElapsed(Duration elapsed) {
         long totalSeconds = elapsed.getSeconds();
@@ -214,7 +240,9 @@ public final class MapConverter {
     }
 
     private boolean shouldWriteTmxLevelAttributes(Collection<LotHeaderData> headers) {
-        if (options.expectedSourceCellSize() != null && options.expectedSourceCellSize() == 256) {
+        // Native 256x256 output is a Build 42 style project, which uses TMX 2.0 level attributes.
+        if (targetCellSize == BUILD42_CELL_SIZE
+            || (options.expectedSourceCellSize() != null && options.expectedSourceCellSize() == 256)) {
             return true;
         }
 
@@ -276,6 +304,35 @@ public final class MapConverter {
         }
     }
 
+    /** Cell size of Build 42 compiled maps; they can only be exported to this native grid. */
+    public static final int BUILD42_CELL_SIZE = 256;
+
+    /**
+     * Resolves the output grid. {@code null} (auto) matches the source: 256 when any source cell is a
+     * Build 42 256x256 cell, otherwise 300. Build 42 cells can only be written to the native 256 grid;
+     * converting them to the legacy 300 grid is not supported.
+     */
+    public static int resolveTargetCellSize(Integer requested, Collection<LotHeaderData> headers) throws InvalidDataException {
+        boolean hasBuild42Cells = false;
+        for (LotHeaderData header : headers) {
+            if (header.cellDim() == BUILD42_CELL_SIZE) {
+                hasBuild42Cells = true;
+                break;
+            }
+        }
+
+        if (requested == null) {
+            return hasBuild42Cells ? BUILD42_CELL_SIZE : 300;
+        }
+
+        if (hasBuild42Cells && requested != BUILD42_CELL_SIZE) {
+            throw new InvalidDataException("Build 42 maps (256x256 cells) can only be exported to native 256x256 cells; "
+                + requested + "x" + requested + " output is not supported. Use --target-cell-size 256 or auto.");
+        }
+
+        return requested;
+    }
+
     /** Number of target cells covered by the given source cells. */
     public static int estimateTargetCellCount(Collection<LotHeaderData> headers, int targetCellSize) {
         int[] bounds = targetBounds(headers, targetCellSize);
@@ -303,7 +360,7 @@ public final class MapConverter {
     }
 
     private void createTargetCellGrid(Collection<LotHeaderData> headers) {
-        int[] bounds = targetBounds(headers, options.targetCellSize());
+        int[] bounds = targetBounds(headers, targetCellSize);
         for (int x = bounds[0]; x <= bounds[2]; x++) {
             for (int y = bounds[1]; y <= bounds[3]; y++) {
                 getTargetCell(new CellCoord(x, y));
@@ -314,7 +371,6 @@ public final class MapConverter {
     private void readLotPacks(Collection<LotHeaderData> headers, TileSetCatalog tileSets) throws IOException {
         List<LotHeaderData> orderedHeaders = new ArrayList<>(headers);
         orderedHeaders.sort(Comparator.comparingInt(LotHeaderData::cellX).thenComparingInt(LotHeaderData::cellY));
-        int targetCellSize = options.targetCellSize();
         for (int i = 0; i < orderedHeaders.size(); i++) {
             LotHeaderData header = orderedHeaders.get(i);
             report("Lotpacks", "Reading world_" + header.cellX() + "_" + header.cellY() + ".lotpack", i + 1, orderedHeaders.size());
@@ -357,7 +413,7 @@ public final class MapConverter {
     }
 
     private void reprojectRooms(Collection<LotHeaderData> headers) {
-        int size = options.targetCellSize();
+        int size = this.targetCellSize;
         for (LotHeaderData header : headers) {
             for (RoomRect room : header.rooms()) {
                 if (room.width() <= 0 || room.height() <= 0) {
@@ -405,7 +461,7 @@ public final class MapConverter {
         Set<CellCoord> outputCells = new HashSet<>(targetCells.keySet());
         List<MapObject> result = new ArrayList<>();
         for (MapObject mapObject : ObjectsLuaReader.read(objectsFile)) {
-            if (mapObject.canWrite() && outputCells.contains(mapObject.getCell(options.targetCellSize()))) {
+            if (mapObject.canWrite() && outputCells.contains(mapObject.getCell(targetCellSize))) {
                 result.add(mapObject);
             }
         }
