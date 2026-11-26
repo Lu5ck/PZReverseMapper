@@ -1,7 +1,16 @@
-.vs/
-bin/
-obj/
+# Build output
+target/
 dist/
+*.class
+
+# IDE state
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+.vs/
 *.user
 *.suo
 

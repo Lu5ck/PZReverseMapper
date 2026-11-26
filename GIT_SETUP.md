@@ -23,9 +23,25 @@ git push origin v0.1.0
 
 ## Build check
 
-```powershell
-dotnet build .\PZReverseMapper.sln -c Release
+```bash
+mvn -B verify
 ```
 
+The runnable jar is written to `target/PZReverseMapper-<version>.jar`.
+
+## Release
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds and tests
+the tagged commit and publishes `PZReverseMapper-<version>.jar` and its
+`.sha256` checksum as a GitHub release:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The same workflow can be started from the Actions tab with a version number; it
+then creates the tag on the selected branch.
+
 The repository intentionally ignores generated exports, game files, build
-outputs, Visual Studio state, and local validation folders.
+outputs, IDE state, and local validation folders.

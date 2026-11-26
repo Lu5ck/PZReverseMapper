@@ -1,0 +1,117 @@
+name: Release
+
+# Publishes the compiled jar as a GitHub release.
+#   - Push a tag such as v1.2.0 to build that commit and release it, or
+#   - run this workflow manually with a version: the tag v<version> is created on the selected branch.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, for example 1.2.0 (the tag v1.2.0 is created)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${INPUT_VERSION#v}"
+          fi
+
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$version' is not a version like 1.2.0 or 1.2.0-beta.1"
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "jar=PZReverseMapper-$version.jar" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build and test
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: mvn -B -ntp -Drevision="$VERSION" verify
+
+      - name: Check jar
+        env:
+          JAR: ${{ steps.version.outputs.jar }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          test -f "target/$JAR"
+          java -Djava.awt.headless=true -jar "target/$JAR" --help
+          unzip -p "target/$JAR" pzreversemapper/version.properties | grep -qx "version=$VERSION"
+          (cd target && sha256sum "$JAR" > "$JAR.sha256")
+
+      - name: Write release notes
+        env:
+          JAR: ${{ steps.version.outputs.jar }}
+        run: |
+          cat > release-notes.md <<EOF
+          ## Download
+
+          - \`$JAR\`: Studio (graphical) and command-line converter in one jar.
+          - \`$JAR.sha256\`: SHA-256 checksum.
+
+          Requires Java 17 or newer. Double-click the jar, or run \`java -jar $JAR\`, to open Studio.
+          Run \`java -jar $JAR --help\` for the command-line options. Large maps need a larger heap,
+          for example \`java -Xmx8g -jar $JAR ...\`.
+
+          PZ Reverse Mapper is an unofficial community tool and contains no Project Zomboid assets.
+          See LICENSE for the terms of use.
+          EOF
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          JAR: ${{ steps.version.outputs.jar }}
+        run: |
+          assets=("target/$JAR" "target/$JAR.sha256")
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG exists; replacing its assets."
+            gh release upload "$TAG" "${assets[@]}" --clobber
+            exit 0
+          fi
+
+          flags=(--title "PZ Reverse Mapper $VERSION" --notes-file release-notes.md --generate-notes)
+          if [[ "$VERSION" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            flags+=(--verify-tag)
+          else
+            flags+=(--target "$GITHUB_SHA")
+          fi
+
+          gh release create "$TAG" "${assets[@]}" "${flags[@]}"

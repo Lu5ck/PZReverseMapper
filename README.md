@@ -4,9 +4,9 @@
   <img src="assets/pz-reverse-mapper-icon.png" width="160" alt="PZ Reverse Mapper icon">
 </p>
 
-PZ Reverse Mapper is a Windows application that rebuilds editable mapping
-assets from compiled Project Zomboid map data. It provides a graphical Studio
-and a command-line converter based on .NET 8.
+PZ Reverse Mapper rebuilds editable mapping assets from compiled Project
+Zomboid map data. It provides a graphical Studio and a command-line converter,
+both shipped in a single cross-platform Java jar (Windows, macOS and Linux).
 
 The project supports legacy 300 × 300 compiled cells and Build 42 256 × 256
 compiled cells. Data is converted through world coordinates before being
@@ -72,26 +72,33 @@ regardless of whether the source is 1x, 2x or another scale.
 
 ## Requirements
 
-For a packaged release:
-
-- Windows 10 or Windows 11
-- .NET 8 Desktop Runtime, unless the release is published as self-contained
+- Java 17 or newer (any distribution, for example Eclipse Temurin)
 - A legally installed copy of Project Zomboid for the game data being read
 
 For building from source:
 
-- .NET 8 SDK
-- Visual Studio 2022 is optional
+- JDK 17 or newer
+- Apache Maven 3.9 or newer
+
+## Download
+
+Releases are published on the repository's **Releases** page as
+`PZReverseMapper-<version>.jar`, with a `.sha256` checksum next to it.
 
 ## Using Studio
 
-1. Start `PZReverseMapper.exe`.
-2. Select a workflow preset.
-3. Select the compiled map folder.
-4. Select the Project Zomboid `media` folder for tiles and texture packs.
-5. Select a dedicated output folder.
-6. Use `Validate` before a map export.
-7. Run a small source-cell test before exporting a complete map.
+Double-click the jar, or start it from a terminal:
+
+```bash
+java -jar PZReverseMapper-1.0.0.jar
+```
+
+1. Select a workflow preset.
+2. Select the compiled map folder.
+3. Select the Project Zomboid `media` folder for tiles and texture packs.
+4. Select a dedicated output folder.
+5. Use `Validate` before a map export.
+6. Run a small source-cell test before exporting a complete map.
 
 For Build 42 maps intended for WorldEd, use:
 
@@ -103,33 +110,47 @@ When `Tile sheets` is the only selected output, Studio automatically enters
 tiles-only mode. The compiled map input is not required and no `.lotheader` or
 `.lotpack` file is parsed.
 
-The About window explains the project, current version, tile extraction model
+The "Reproducible command" box always shows the equivalent command line, and
+the About window explains the project, current version, tile extraction model
 and unofficial-project status.
 
 ## Command-line examples
 
-Build 42 to classic WorldEd cells:
+Any argument switches the jar to the command-line converter. Build 42 to
+classic WorldEd cells:
 
-```powershell
-PZReverseMapper.Cli.exe `
-  --input "D:\Maps\CompiledMap" `
-  --output "D:\Exports\EditableMap" `
-  --tiles "C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid\media" `
-  --source-cell-size 256 `
-  --target-cell-size 300 `
+```bash
+java -jar PZReverseMapper-1.0.0.jar \
+  --input "D:\Maps\CompiledMap" \
+  --output "D:\Exports\EditableMap" \
+  --tiles "C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid\media" \
+  --source-cell-size 256 \
+  --target-cell-size 300 \
   --extract-tiles
 ```
 
 Tiles only:
 
-```powershell
-PZReverseMapper.Cli.exe `
-  --output "D:\Exports\Tiles" `
-  --tiles "C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid\media" `
+```bash
+java -jar PZReverseMapper-1.0.0.jar \
+  --output "D:\Exports\Tiles" \
+  --tiles "C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid\media" \
   --tiles-only
 ```
 
-Use `--help` for the complete CLI option list.
+In PowerShell, use a backtick (`` ` ``) instead of `\` to continue lines. Use
+`--help` for the complete CLI option list, and see [docs/CLI.md](docs/CLI.md)
+for details. Exit codes are `0` on success, `1` for usage errors or a cancelled
+clean, and `2` for failures.
+
+### Memory
+
+Complete maps hold every decoded tile in memory. If Java reports that it ran
+out of memory, give it a larger heap, for example:
+
+```bash
+java -Xmx12g -jar PZReverseMapper-1.0.0.jar --input ... --output ...
+```
 
 ## Main outputs
 
@@ -145,13 +166,23 @@ Use `--help` for the complete CLI option list.
 - `TilesSingle/<logical-pack>/<tileset>/*.png` — restored individual tiles
 - `Tiles/<logical-pack>/*.png` — reconstructed eight-column tilesets
 
+Text outputs (TMX, PZW, TBX) are written as UTF-8 with a byte order mark and
+CRLF line endings on every platform, exactly like the original Windows tool,
+so exports are interchangeable between machines.
+
 ## Repository layout
 
 ```text
-PZReverseMapper.sln
-PZ_Mapper_Studio/       Windows graphical application
-PZ_Mapper_Converter/    Command-line application and shared conversion core
-assets/                 Repository artwork
+pom.xml                               Maven build (no runtime dependencies)
+src/main/java/pzreversemapper/
+  Main.java                           Jar entry point: Studio or CLI
+  converter/                          Conversion core and command-line converter
+  studio/                             Swing graphical application
+src/main/resources/                   Studio artwork and version file
+src/test/java/                        Unit and end-to-end tests with synthetic map data
+docs/                                 CLI reference and export README template
+assets/                               Repository artwork
+.github/workflows/                    CI and release workflows
 ```
 
 The historical PZ_Mapper application is intentionally not part of this
@@ -159,28 +190,38 @@ standalone repository.
 
 ## Build
 
-```powershell
-dotnet restore .\PZReverseMapper.sln
-dotnet build .\PZReverseMapper.sln -c Release --no-restore
+```bash
+mvn -B verify
 ```
 
-Studio output:
+The runnable jar is written to:
 
 ```text
-PZ_Mapper_Studio/bin/Release/net8.0-windows/PZReverseMapper.exe
+target/PZReverseMapper-<version>.jar
 ```
 
-CLI output:
+Pass `-Drevision=<version>` to build a specific version number.
 
-```text
-PZ_Mapper_Converter/bin/Release/net8.0/PZReverseMapper.Cli.exe
-```
+## Releases
+
+The `Release` workflow (`.github/workflows/release.yml`) builds, tests and
+publishes the jar plus its SHA-256 checksum as a GitHub release:
+
+- push a version tag, for example `git tag v1.2.0 && git push origin v1.2.0`, or
+- run the workflow from the Actions tab and enter a version such as `1.2.0`;
+  the tag `v1.2.0` is created on the selected branch.
+
+Versions with a suffix such as `1.2.0-beta.1` are published as pre-releases.
+The `CI` workflow builds and tests every push and pull request on Windows,
+macOS and Linux and keeps the jar as a downloadable build artifact.
 
 ## Safety and limitations
 
 - Game and mod inputs are read only.
 - Existing output is removed only when the guarded clean-output option is
-  explicitly enabled and confirmed.
+  explicitly enabled and confirmed. Entries are moved to the Recycle Bin
+  (Windows) or Trash (macOS, Linux) and never deleted permanently; if the
+  system offers no trash, the clean is refused and nothing is removed.
 - Reverse-engineered formats can change between Project Zomboid builds.
 - Reconstructed building TBX files are supplemental exports, not original
   authoring-source files.
