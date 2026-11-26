@@ -1,58 +1,131 @@
 package pzreversemapper.converter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
-import java.util.TreeSet;
+import java.util.function.UnaryOperator;
 
-/** Writes supplemental building TBX files reconstructed from compiled building room ids. */
+/**
+ * Writes the building TBX set. Every compiled building is rebuilt as a BuildingEd building;
+ * buildings that come out identical share one TBX file under {@code tbx_buildings/}, and each
+ * building is placed back on the map as a WorldEd lot in the TMX cell holding it. Tiles and rooms a
+ * lot supplies are recorded on the target cells so the TMX does not repeat them.
+ *
+ * <p>With a BuildingEd configuration, buildings get rooms, walls, floors, doors, windows, stairs and
+ * furniture. Without one, they hold their rooms and keep every building tile as a user-drawn tile.
+ */
 final class BuildingTbxWriter {
+    static final String DIRECTORY = "tbx_buildings";
+    static final String INDEX_FILE = "buildings.csv";
+
     private final String outputDirectory;
     private final int cellSize;
     private final Map<CellCoord, TargetCell> targetCells;
     private final TbxReconstructor reconstructor;
+    private final boolean rebuilt;
+    private final boolean placeLots;
+    private final UnaryOperator<String> tileNames;
     private final TbxReconstructor.Stats stats = new TbxReconstructor.Stats();
-    private final Map<CellCoord, Map<Integer, List<TileLayer>>> stackLayers = new HashMap<>();
-    private List<LayerKey> allLayerKeys;
-    private int reconstructedCount;
+    private final Map<CellCoord, Map<Integer, List<Map.Entry<LayerKey, TileLayer>>>> stackLayers = new HashMap<>();
+    /** SHA-256 of a TBX document to the file holding it. */
+    private final Map<String, String> fileByContent = new HashMap<>();
+    private final Set<String> usedFileNames = new HashSet<>();
+    private final Set<RoomKey> lotRooms = new HashSet<>();
+    private final List<Placement> placements = new ArrayList<>();
+    private int lotCount;
+    private int crossingCount;
+    private int inexactCount;
 
-    BuildingTbxWriter(String outputDirectory, int cellSize, Map<CellCoord, TargetCell> targetCells) {
-        this(outputDirectory, cellSize, targetCells, null);
+    /** A compiled room, identified by its source cell and id. */
+    record RoomKey(int cellX, int cellY, int roomId) {
     }
 
-    /** With a BuildingEd config, buildings are rebuilt as proper BuildingEd buildings instead of tile dumps. */
-    BuildingTbxWriter(String outputDirectory, int cellSize, Map<CellCoord, TargetCell> targetCells, BuildingEdConfig config) {
+    /** One compiled building: its shared TBX file, world position and lot cell (null when not placed). */
+    record Placement(String file, int worldX, int worldY, int worldZ, int sourceCellX, int sourceCellY, int sourceBuilding,
+                     CellCoord lotCell) {
+    }
+
+    /**
+     * With a BuildingEd config, buildings are rebuilt as proper BuildingEd buildings instead of rooms
+     * holding user tiles. Without {@code placeLots} (no TMX is written) buildings are not placed.
+     * {@code tileNames} spells compiled tiles the way the TMX does and returns {@code null} for tiles a
+     * TMX cannot store, which are then left out of the TBX files as well.
+     */
+    BuildingTbxWriter(String outputDirectory, int cellSize, Map<CellCoord, TargetCell> targetCells, BuildingEdConfig config,
+                      boolean placeLots, UnaryOperator<String> tileNames) {
         this.outputDirectory = outputDirectory;
         this.cellSize = cellSize;
         this.targetCells = targetCells;
-        this.reconstructor = config == null ? null : new TbxReconstructor(config);
+        this.rebuilt = config != null;
+        this.placeLots = placeLots;
+        this.tileNames = tileNames;
+        this.reconstructor = new TbxReconstructor(config == null ? BuildingEdConfig.empty() : config);
     }
 
-    /** Totals over all rebuilt buildings (only meaningful with a BuildingEd config). */
+    /** Totals over all buildings: how much of the compiled building tiles the TBX files reproduce. */
     TbxReconstructor.Stats stats() {
         return stats;
     }
 
-    int reconstructedCount() {
-        return reconstructedCount;
+    /** Whether buildings were rebuilt from a BuildingEd configuration. */
+    boolean rebuilt() {
+        return rebuilt;
     }
 
+    /** Compiled buildings written (each one is a placement of a shared TBX file). */
+    int buildingCount() {
+        return placements.size();
+    }
+
+    /** Distinct TBX files written. */
+    int uniqueCount() {
+        return fileByContent.size();
+    }
+
+    /** Buildings placed on the map as lots. */
+    int lotCount() {
+        return lotCount;
+    }
+
+    /** Buildings not placed because they do not fit in one TMX cell. */
+    int crossingCount() {
+        return crossingCount;
+    }
+
+    /** Buildings not placed because their TBX would draw tiles that are not in the compiled map. */
+    int inexactCount() {
+        return inexactCount;
+    }
+
+    boolean placesLots() {
+        return placeLots;
+    }
+
+    /** Whether a compiled room is drawn by a lot, so the TMX must not repeat it as a RoomDef. */
+    boolean isLotRoom(int sourceCellX, int sourceCellY, int roomId) {
+        return lotRooms.contains(new RoomKey(sourceCellX, sourceCellY, roomId));
+    }
+
+    /** Writes the TBX files and {@code buildings.csv}; returns the number of buildings. */
     int write(Collection<LotHeaderData> headers) throws IOException {
         List<LotHeaderData> orderedHeaders = new ArrayList<>(headers);
         orderedHeaders.sort(Comparator.comparingInt(LotHeaderData::cellX).thenComparingInt(LotHeaderData::cellY));
+        Path directory = Paths.get(outputDirectory, DIRECTORY);
+        Files.createDirectories(directory);
 
-        int count = 0;
         for (LotHeaderData header : orderedHeaders) {
             List<BuildingDef> buildings = new ArrayList<>(header.buildings());
             buildings.sort(Comparator.comparingInt(BuildingDef::sourceBuildingId));
@@ -65,130 +138,133 @@ final class BuildingTbxWriter {
                     }
                 }
 
-                if (rooms.isEmpty()) {
-                    continue;
+                if (!rooms.isEmpty()) {
+                    writeBuilding(directory, header, building, rooms);
                 }
-
-                if (reconstructor != null) {
-                    writeReconstructed(header, building, rooms);
-                } else {
-                    writeBuilding(header, building, rooms);
-                }
-
-                count++;
             }
         }
 
-        return count;
+        writeIndex(directory.resolve(INDEX_FILE));
+        return placements.size();
     }
 
-    private void writeBuilding(LotHeaderData header, BuildingDef building, List<RoomRect> rooms) throws IOException {
-        BuildingBounds bounds = getBounds(rooms);
-
-        Map<Integer, List<RoomRect>> groupsById = new LinkedHashMap<>();
-        for (RoomRect room : rooms) {
-            groupsById.computeIfAbsent(room.sourceRoomId(), id -> new ArrayList<>()).add(room);
-        }
-
-        List<Map.Entry<Integer, List<RoomRect>>> roomGroups = new ArrayList<>(groupsById.entrySet());
-        roomGroups.sort(Comparator
-            .comparingInt((Map.Entry<Integer, List<RoomRect>> group) -> minFloor(group.getValue()))
-            .thenComparingInt(Map.Entry::getKey));
-
-        Map<Integer, Integer> roomIndexById = new HashMap<>();
-        for (int i = 0; i < roomGroups.size(); i++) {
-            roomIndexById.put(roomGroups.get(i).getKey(), i + 1);
-        }
-
-        List<String> userTiles = collectUserTiles(bounds);
-        Map<String, Integer> userTileIds = new HashMap<>();
-        for (int i = 0; i < userTiles.size(); i++) {
-            userTileIds.put(userTiles.get(i), i + 1);
-        }
-
-        TreeSet<Integer> floors = new TreeSet<>();
-        for (RoomRect room : rooms) {
-            floors.add(room.floor());
-        }
-
-        floors.addAll(getFloorsWithTiles(bounds));
-
-        String sourceCellName = header.cellX() + "_" + header.cellY();
-        String buildingName = roomGroups.get(0).getValue().get(0).name();
-        String safeName = sanitizeFileName(buildingName);
-        Path directory = Paths.get(outputDirectory, "tbx_buildings", sourceCellName);
-        Files.createDirectories(directory);
-
-        String fileName = String.format(java.util.Locale.ROOT, "%s_b%04d_%s_%d_%d.tbx",
-            sourceCellName, building.sourceBuildingId(), safeName, bounds.minX, bounds.minY);
-        Path file = directory.resolve(fileName);
-
-        try (TextFileWriter writer = new TextFileWriter(file)) {
-            writer.writeLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-            writer.writeLine("<building version=\"4\" width=\"" + bounds.width + "\" height=\"" + bounds.height
-                + "\" ExteriorWall=\"0\" ExteriorWallTrim=\"0\" Door=\"0\" DoorFrame=\"0\" Window=\"0\" Curtains=\"0\" Shutters=\"0\""
-                + " Stairs=\"0\" RoofCap=\"0\" RoofSlope=\"0\" RoofTop=\"0\" GrimeWall=\"0\">");
-            writer.writeLine("<properties>");
-            writer.writeLine("<property name=\"Legend\" value=\"Residential\"/>");
-            writer.writeLine("<property name=\"WorldX\" value=\"" + bounds.minX + "\"/>");
-            writer.writeLine("<property name=\"WorldY\" value=\"" + bounds.minY + "\"/>");
-            writer.writeLine("<property name=\"SourceCell\" value=\"" + sourceCellName + "\"/>");
-            writer.writeLine("<property name=\"SourceBuilding\" value=\"" + building.sourceBuildingId() + "\"/>");
-            writer.writeLine("</properties>");
-            writer.writeLine(" <user_tiles>");
-            for (String tile : userTiles) {
-                writer.writeLine("  <tile tile=\"" + Text.xmlEscape(tile) + "\"/>");
-            }
-
-            writer.writeLine(" </user_tiles>");
-            writer.writeLine(" <used_tiles></used_tiles>");
-            writer.writeLine(" <used_furniture></used_furniture>");
-
-            for (Map.Entry<Integer, List<RoomRect>> group : roomGroups) {
-                RoomRect room = group.getValue().get(0);
-                writer.writeLine(" <room Name=\"" + Text.xmlEscape(room.name()) + "\" InternalName=\"" + Text.xmlEscape(room.name())
-                    + "\" Color=\"" + getRoomColor(room)
-                    + "\" InteriorWall=\"0\" InteriorWallTrim=\"0\" Floor=\"0\" GrimeFloor=\"0\" GrimeWall=\"0\"/>");
-            }
-
-            for (int floor : floors) {
-                List<RoomRect> floorRooms = new ArrayList<>();
-                for (RoomRect room : rooms) {
-                    if (room.floor() == floor) {
-                        floorRooms.add(room);
-                    }
-                }
-
-                writer.writeLine(" <floor>");
-                writer.writeLine("  <rooms>");
-                writer.writeLine(buildRoomCsv(bounds, floorRooms, roomIndexById));
-                writer.writeLine("  </rooms>");
-                writeTileLayers(writer, bounds, floor, userTileIds);
-                writer.writeLine(" </floor>");
-            }
-
-            writer.writeLine("</building>");
-        }
-    }
-
-    private void writeReconstructed(LotHeaderData header, BuildingDef building, List<RoomRect> rooms) throws IOException {
+    private void writeBuilding(Path directory, LotHeaderData header, BuildingDef building, List<RoomRect> rooms) throws IOException {
         TbxReconstructor.Result result = reconstructor.reconstruct(rooms, this::stack, 4);
         TbxModel.Building model = result.building();
-        String sourceCellName = header.cellX() + "_" + header.cellY();
-        model.properties.put("WorldX", Integer.toString(result.originX()));
-        model.properties.put("WorldY", Integer.toString(result.originY()));
-        model.properties.put("WorldZ", Integer.toString(result.baseLevel()));
-        model.properties.put("SourceCell", sourceCellName);
-        model.properties.put("SourceBuilding", Integer.toString(building.sourceBuildingId()));
-
-        Path directory = Paths.get(outputDirectory, "tbx_buildings", sourceCellName);
-        Files.createDirectories(directory);
-        String fileName = String.format(java.util.Locale.ROOT, "%s_b%04d_%s_%d_%d.tbx",
-            sourceCellName, building.sourceBuildingId(), sanitizeFileName(model.rooms.get(0).internalName),
-            result.originX(), result.originY());
-        TbxXmlWriter.write(model, directory.resolve(fileName));
         stats.add(result.stats());
-        reconstructedCount++;
+
+        String content = TbxXmlWriter.toXml(model);
+        String digest = digest(content);
+        String file = fileByContent.get(digest);
+        if (file == null) {
+            file = uniqueFileName(sanitizeFileName(model.rooms.get(0).internalName) + "_" + model.width + "x" + model.height);
+            fileByContent.put(digest, file);
+            TextFileWriter.writeFile(directory.resolve(file), content);
+        }
+
+        CellCoord lotCell = placeLot(result, file);
+        if (lotCell != null) {
+            for (RoomRect room : rooms) {
+                lotRooms.add(new RoomKey(header.cellX(), header.cellY(), room.sourceRoomId()));
+            }
+        }
+
+        placements.add(new Placement(file, result.originX(), result.originY(), result.baseLevel(), header.cellX(), header.cellY(),
+            building.sourceBuildingId(), lotCell));
+    }
+
+    /**
+     * Adds the building as a lot to the target cell holding it and marks the compiled tiles the lot
+     * reproduces. A building is not placed (its tiles and rooms stay in the TMX) when it does not fit
+     * in one target cell, its east and south wall squares included, or when its TBX would draw tiles
+     * the compiled map does not have, so placing lots never changes the map.
+     */
+    private CellCoord placeLot(TbxReconstructor.Result result, String file) {
+        if (!placeLots) {
+            return null;
+        }
+
+        TbxModel.Building model = result.building();
+        int originX = result.originX();
+        int originY = result.originY();
+        CellCoord coord = new CellCoord(BinaryHelpers.floorDiv(originX, cellSize), BinaryHelpers.floorDiv(originY, cellSize));
+        CellCoord far = new CellCoord(
+            BinaryHelpers.floorDiv(originX + model.width, cellSize),
+            BinaryHelpers.floorDiv(originY + model.height, cellSize));
+        TargetCell cell = targetCells.get(coord);
+        if (cell == null || !coord.equals(far)) {
+            crossingCount++;
+            return null;
+        }
+
+        if (result.stats().extra > 0) {
+            inexactCount++;
+            return null;
+        }
+
+        int localX = BinaryHelpers.positiveMod(originX, cellSize);
+        int localY = BinaryHelpers.positiveMod(originY, cellSize);
+        cell.addLot(new TargetCell.Lot("../" + DIRECTORY + "/" + file, localX, localY, result.baseLevel(), model.width + 1,
+            model.height + 1));
+
+        boolean[][][][] reproduced = result.reproduced();
+        for (int floor = 0; floor < reproduced.length; floor++) {
+            int level = result.baseLevel() + floor;
+            for (int x = 0; x <= model.width; x++) {
+                for (int y = 0; y <= model.height; y++) {
+                    boolean[] tiles = reproduced[floor][x][y];
+                    if (tiles == null || tiles.length == 0) {
+                        continue;
+                    }
+
+                    int index = (localX + x) + (localY + y) * cellSize;
+                    List<LayerKey> keys = new ArrayList<>(tiles.length);
+                    squareStack(coord, cell, level, index, keys);
+                    for (int i = 0; i < tiles.length; i++) {
+                        if (tiles[i]) {
+                            cell.coverByLot(keys.get(i), index);
+                        }
+                    }
+                }
+            }
+        }
+
+        lotCount++;
+        return coord;
+    }
+
+    private static String digest(String content) {
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(content.getBytes(StandardCharsets.UTF_8));
+            return Base64.getEncoder().encodeToString(hash);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is not available", ex);
+        }
+    }
+
+    private String uniqueFileName(String base) {
+        String name = base;
+        for (int counter = 2; !usedFileNames.add(Text.foldCase(name)); counter++) {
+            name = base + "_" + counter;
+        }
+
+        return name + ".tbx";
+    }
+
+    /** {@code buildings.csv}: where each compiled building was and which TBX file it uses. */
+    private void writeIndex(Path file) throws IOException {
+        try (TextFileWriter writer = new TextFileWriter(file)) {
+            writer.writeLine("tbx,world_x,world_y,world_z,source_cell,source_building,lot_cell");
+            for (Placement placement : placements) {
+                writer.writeLine(csv(placement.file()) + "," + placement.worldX() + "," + placement.worldY() + "," + placement.worldZ()
+                    + "," + placement.sourceCellX() + "_" + placement.sourceCellY() + "," + placement.sourceBuilding() + ","
+                    + (placement.lotCell() == null ? "" : placement.lotCell().x() + "_" + placement.lotCell().y()));
+            }
+        }
+    }
+
+    private static String csv(String value) {
+        return value.contains(",") || value.contains("\"") ? "\"" + value.replace("\"", "\"\"") + "\"" : value;
     }
 
     /** The compiled tile stack of a world square, bottom to top. */
@@ -199,205 +275,47 @@ final class BuildingTbxWriter {
             return List.of();
         }
 
-        List<TileLayer> layers = stackLayers
-            .computeIfAbsent(coord, ignored -> new HashMap<>())
-            .computeIfAbsent(level, ignored -> {
-                List<LayerKey> keys = new ArrayList<>();
-                for (LayerKey key : cell.tilesByLayer().keySet()) {
-                    if (key.floor() == level) {
-                        keys.add(key);
-                    }
-                }
-
-                keys.sort(LayerKey.ORDER);
-                List<TileLayer> ordered = new ArrayList<>();
-                for (LayerKey key : keys) {
-                    ordered.add(cell.tilesByLayer().get(key));
-                }
-
-                return ordered;
-            });
         int index = BinaryHelpers.positiveMod(worldX, cellSize) + BinaryHelpers.positiveMod(worldY, cellSize) * cellSize;
+        return squareStack(coord, cell, level, index, null);
+    }
+
+    /** The tiles of one square of a target cell, bottom to top; {@code keys} receives each tile's layer. */
+    private List<String> squareStack(CellCoord coord, TargetCell cell, int level, int index, List<LayerKey> keys) {
+        List<Map.Entry<LayerKey, TileLayer>> layers = layers(coord, cell, level);
         List<String> stack = new ArrayList<>(layers.size());
-        for (TileLayer layer : layers) {
-            String tile = layer.get(index);
-            if (tile != null) {
-                stack.add(tile);
+        for (Map.Entry<LayerKey, TileLayer> layer : layers) {
+            String tile = layer.getValue().get(index);
+            String name = tile == null ? null : tileNames.apply(tile);
+            if (name != null) {
+                stack.add(name);
+                if (keys != null) {
+                    keys.add(layer.getKey());
+                }
             }
         }
 
         return stack;
     }
 
-    private static int minFloor(List<RoomRect> rooms) {
-        int min = Integer.MAX_VALUE;
-        for (RoomRect room : rooms) {
-            min = Math.min(min, room.floor());
-        }
-
-        return min;
-    }
-
-    private static BuildingBounds getBounds(List<RoomRect> rooms) {
-        int minX = Integer.MAX_VALUE;
-        int minY = Integer.MAX_VALUE;
-        int maxX = Integer.MIN_VALUE;
-        int maxY = Integer.MIN_VALUE;
-        for (RoomRect room : rooms) {
-            minX = Math.min(minX, room.x());
-            minY = Math.min(minY, room.y());
-            maxX = Math.max(maxX, room.right());
-            maxY = Math.max(maxY, room.bottom());
-        }
-
-        minX -= 1;
-        minY -= 1;
-        maxX += 1;
-        maxY += 1;
-        return new BuildingBounds(minX, minY, Math.max(1, maxX - minX), Math.max(1, maxY - minY));
-    }
-
-    private List<String> collectUserTiles(BuildingBounds bounds) {
-        List<String> userTiles = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
-
-        for (LayerKey key : getAllLayerKeys()) {
-            for (int y = 0; y <= bounds.height; y++) {
-                for (int x = 0; x <= bounds.width; x++) {
-                    String tileName = tryGetTile(bounds.minX + x, bounds.minY + y, key.floor(), key.layer());
-                    if (tileName != null && seen.add(tileName)) {
-                        userTiles.add(tileName);
+    /** The layers of one level of a target cell, bottom to top. */
+    private List<Map.Entry<LayerKey, TileLayer>> layers(CellCoord coord, TargetCell cell, int level) {
+        return stackLayers
+            .computeIfAbsent(coord, ignored -> new HashMap<>())
+            .computeIfAbsent(level, ignored -> {
+                List<Map.Entry<LayerKey, TileLayer>> ordered = new ArrayList<>();
+                for (Map.Entry<LayerKey, TileLayer> entry : cell.tilesByLayer().entrySet()) {
+                    if (entry.getKey().floor() == level) {
+                        ordered.add(Map.entry(entry.getKey(), entry.getValue()));
                     }
                 }
-            }
-        }
 
-        return userTiles;
-    }
-
-    private List<Integer> getFloorsWithTiles(BuildingBounds bounds) {
-        List<Integer> floors = new ArrayList<>();
-        Set<Integer> distinctFloors = new java.util.LinkedHashSet<>();
-        for (LayerKey key : getAllLayerKeys()) {
-            distinctFloors.add(key.floor());
-        }
-
-        for (int floor : distinctFloors) {
-            for (int layer : getLayers(floor)) {
-                if (hasAnyTile(bounds, floor, layer)) {
-                    floors.add(floor);
-                    break;
-                }
-            }
-        }
-
-        return floors;
-    }
-
-    private void writeTileLayers(TextFileWriter writer, BuildingBounds bounds, int floor, Map<String, Integer> userTileIds)
-        throws IOException {
-        for (int layer : getLayers(floor)) {
-            if (!hasAnyTile(bounds, floor, layer)) {
-                continue;
-            }
-
-            writer.writeLine("  <tiles layer=\"" + TmxWriter.getTbxLayerName(layer - 1) + "\">");
-            writer.writeLine(TmxWriter.buildCsv(bounds.width + 1, bounds.height + 1, (x, y) -> {
-                String tileName = tryGetTile(bounds.minX + x, bounds.minY + y, floor, layer);
-                Integer id = tileName == null ? null : userTileIds.get(tileName);
-                return id == null ? 0 : id;
-            }));
-            writer.writeLine("  </tiles>");
-        }
-    }
-
-    private static String buildRoomCsv(BuildingBounds bounds, List<RoomRect> floorRooms, Map<Integer, Integer> roomIndexById) {
-        return TmxWriter.buildCsv(bounds.width, bounds.height, (x, y) -> {
-            int worldX = bounds.minX + x;
-            int worldY = bounds.minY + y;
-            for (RoomRect room : floorRooms) {
-                if (worldX >= room.x() && worldX < room.right() && worldY >= room.y() && worldY < room.bottom()) {
-                    return roomIndexById.get(room.sourceRoomId());
-                }
-            }
-
-            return 0;
-        });
-    }
-
-    private boolean hasAnyTile(BuildingBounds bounds, int floor, int layer) {
-        for (int y = 0; y <= bounds.height; y++) {
-            for (int x = 0; x <= bounds.width; x++) {
-                if (tryGetTile(bounds.minX + x, bounds.minY + y, floor, layer) != null) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /** Returns the tile at a world square, or {@code null} when empty or filtered out. */
-    private String tryGetTile(int worldX, int worldY, int floor, int layer) {
-        CellCoord cellCoord = new CellCoord(
-            BinaryHelpers.floorDiv(worldX, cellSize),
-            BinaryHelpers.floorDiv(worldY, cellSize));
-
-        TargetCell cell = targetCells.get(cellCoord);
-        if (cell == null) {
-            return null;
-        }
-
-        TileLayer tiles = cell.tilesByLayer().get(new LayerKey(floor, layer));
-        if (tiles == null) {
-            return null;
-        }
-
-        int localX = BinaryHelpers.positiveMod(worldX, cellSize);
-        int localY = BinaryHelpers.positiveMod(worldY, cellSize);
-        String tileName = tiles.get(localX + localY * cellSize);
-        return tileName != null && TbxTileFilter.shouldInclude(tileName) ? tileName : null;
-    }
-
-    /** Every distinct (floor, layer) across all target cells, ordered by floor then layer. */
-    private List<LayerKey> getAllLayerKeys() {
-        if (allLayerKeys == null) {
-            TreeSet<LayerKey> keys = new TreeSet<>(LayerKey.ORDER);
-            for (TargetCell cell : targetCells.values()) {
-                keys.addAll(cell.tilesByLayer().keySet());
-            }
-
-            allLayerKeys = List.copyOf(keys);
-        }
-
-        return allLayerKeys;
-    }
-
-    private List<Integer> getLayers(int floor) {
-        List<Integer> layers = new ArrayList<>();
-        for (LayerKey key : getAllLayerKeys()) {
-            if (key.floor() == floor) {
-                layers.add(key.layer());
-            }
-        }
-
-        return layers;
-    }
-
-    /** Deterministic stand-in for the per-process randomized {@code HashCode.Combine} colour. */
-    private static String getRoomColor(RoomRect room) {
-        int hash = Objects.hash(room.name(), room.sourceRoomId(), room.floor());
-        int r = 64 + (hash & 0x7f);
-        int g = 64 + ((hash >> 8) & 0x7f);
-        int b = 64 + ((hash >> 16) & 0x7f);
-        return r + " " + g + " " + b;
+                ordered.sort(Map.Entry.comparingByKey(LayerKey.ORDER));
+                return ordered;
+            });
     }
 
     private static String sanitizeFileName(String value) {
         String sanitized = Text.sanitizeFileName(value);
         return Text.isNullOrWhiteSpace(sanitized) ? "building" : sanitized;
-    }
-
-    private record BuildingBounds(int minX, int minY, int width, int height) {
     }
 }

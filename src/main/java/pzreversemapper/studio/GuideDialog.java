@@ -82,8 +82,8 @@ final class GuideDialog extends JDialog {
         bullet(guide, "Initial export - auto grid: safest default; every map keeps its own grid.");
         bullet(guide, "B42 source 256 -> TMX 256: Build 42 maps with source-size validation.");
         bullet(guide, "v41 source 300 -> TMX 300: legacy workflow with source-size validation.");
-        bullet(guide, "Map only - no TBX: writes TMX/PZW and objects, but skips RoomDef and building TBX extras.");
-        bullet(guide, "TBX only - rooms/buildings: writes only RoomDef TBX and supplemental building TBX outputs.");
+        bullet(guide, "Map only - no TBX: writes TMX/PZW and objects; buildings stay as plain tiles and RoomDefs in the TMX.");
+        bullet(guide, "TBX only - buildings: writes only the building TBX files under tbx_buildings.");
 
         section(guide, "5. Asset paths");
         bullet(guide, "Folder pickers start in the application folder instead of the Desktop. The default output path is an export subfolder beside the app.");
@@ -103,8 +103,8 @@ final class GuideDialog extends JDialog {
         bullet(guide, "Tile sheets: keeps every physical pack atlas separate under TilesRaw/<physical-pack>, merges only cut tiles under TilesSingle/<logical-pack>/<tileset>, then rebuilds eight-column sheets under Tiles/<logical-pack>. Matching .floor.pack and .pack files never share raw atlas files.");
         bullet(guide, "When Tile sheets is the only selected output, Studio uses tiles-only mode and does not read lotheaders or lotpacks.");
         bullet(guide, "Objects: reads objects.lua and writes visible WorldEd objects into the PZW project.");
-        bullet(guide, "RoomDef TBX: writes one TBX per room under tmx/tbx/<cell>.");
-        bullet(guide, "Building TBX pack: writes one TBX per compiled building under tbx_buildings/<source-cell>. Without a BuildingEd config these are plain tile dumps.");
+        bullet(guide, "Building TBX: writes the buildings under tbx_buildings. Buildings that come out identical share one TBX file, and every building is placed back on its TMX cell as a WorldEd lot. The tiles and rooms a lot draws are left out of the TMX, so nothing is stacked twice. tbx_buildings/buildings.csv lists every building with its TBX file and position.");
+        bullet(guide, "Without a BuildingEd config, a building TBX holds the building's rooms and keeps its tiles as user-drawn tiles.");
         bullet(guide, "With a BuildingEd config, each building is rebuilt with rooms, exterior and interior walls, trims, floors, ceilings, grime, doors, windows, curtains, shutters, stairs and furniture. Entries are chosen by majority vote against the config, the result is re-rendered with BuildingEd's layout rules, and any tile it cannot reproduce stays a user-drawn tile. The run log reports how much was reproduced.");
         bullet(guide, "Also set Tiles/media for rebuilt buildings: BuildingEd's grime and window rules read the game's tile properties. Roofs and wall-layer furniture stay user-drawn tiles. Rebuilt TBX files are reconstructions, not the original source files.");
 

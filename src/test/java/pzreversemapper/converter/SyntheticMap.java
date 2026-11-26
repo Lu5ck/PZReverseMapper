@@ -170,6 +170,17 @@ public final class SyntheticMap {
      */
     static void writeCompiledCell(Path directory, int cellX, int cellY, int minLevel, int maxLevel, StackAt stackAt,
                                   List<RoomRect> localRooms) throws IOException {
+        int[] all = new int[localRooms.size()];
+        for (int i = 0; i < all.length; i++) {
+            all[i] = i;
+        }
+
+        writeCompiledCell(directory, cellX, cellY, minLevel, maxLevel, stackAt, localRooms, new int[][] {all});
+    }
+
+    /** Like {@link #writeCompiledCell(Path, int, int, int, int, StackAt, List)}, with buildings given as room indexes. */
+    static void writeCompiledCell(Path directory, int cellX, int cellY, int minLevel, int maxLevel, StackAt stackAt,
+                                  List<RoomRect> localRooms, int[][] buildings) throws IOException {
         List<String> tiles = new ArrayList<>();
         Map<String, Integer> tileIndex = new LinkedHashMap<>();
         for (int level = minLevel; level <= maxLevel; level++) {
@@ -186,15 +197,12 @@ public final class SyntheticMap {
         }
 
         List<Room> rooms = new ArrayList<>();
-        int[] building = new int[localRooms.size()];
-        for (int i = 0; i < localRooms.size(); i++) {
-            RoomRect rect = localRooms.get(i);
+        for (RoomRect rect : localRooms) {
             rooms.add(new Room(rect.name(), rect.floor(), new int[][] {{rect.x(), rect.y(), rect.width(), rect.height()}}));
-            building[i] = i;
         }
 
         writeLotHeaderV1(directory.resolve(cellX + "_" + cellY + ".lotheader"), tiles, minLevel, maxLevel, rooms,
-            new int[][] {building}, new byte[32 * 32]);
+            buildings, new byte[32 * 32]);
 
         int chunkCount = 32 * 32;
         ByteArrayOutputStream data = new ByteArrayOutputStream();

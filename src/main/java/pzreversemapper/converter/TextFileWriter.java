@@ -20,6 +20,18 @@ final class TextFileWriter implements Closeable {
 
     private final Writer writer;
 
+    /** Writes to any writer, without a byte order mark (used to build file content in memory). */
+    TextFileWriter(Writer writer) {
+        this.writer = writer;
+    }
+
+    /** Writes already-formatted text to a file with the UTF-8 byte order mark. */
+    static void writeFile(Path file, String text) throws IOException {
+        try (TextFileWriter out = new TextFileWriter(file)) {
+            out.write(text);
+        }
+    }
+
     TextFileWriter(Path file) throws IOException {
         OutputStream stream = Files.newOutputStream(file);
         try {

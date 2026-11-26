@@ -1,6 +1,7 @@
 package pzreversemapper.converter;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -28,6 +29,9 @@ import pzreversemapper.converter.TbxModel.Window;
 class TbxReconstructionTest {
     private static final int ORIGIN_X = 100;
     private static final int ORIGIN_Y = 40;
+    /** A kitchen square of the sample building: its first compiled tile is the kitchen floor. */
+    private static final int HOLE_X = 2;
+    private static final int HOLE_Y = 3;
 
     @TempDir
     Path temp;
@@ -128,51 +132,216 @@ class TbxReconstructionTest {
     @Test
     void converterRebuildsBuildingsFromCompiledMaps() throws Exception {
         Path map = Files.createDirectories(temp.resolve("map"));
-        List<RoomRect> local = TbxFixture.roomRects(original, ORIGIN_X, ORIGIN_Y);
-        SyntheticMap.writeCompiledCell(map, 0, 0, 0, 1, (x, y, level) -> {
-            int bx = x - ORIGIN_X;
-            int by = y - ORIGIN_Y;
-            if (bx >= 0 && by >= 0 && bx <= original.width && by <= original.height) {
-                return compiled[level][bx][by];
-            }
-
-            return level == 0 ? List.of(TbxFixture.GROUND) : List.of();
-        }, local);
+        writeMap(map, new int[][] {{ORIGIN_X, ORIGIN_Y}}, -1, -1);
 
         Path output = temp.resolve("out");
         ConverterOptions options = ConverterOptions.parse(new String[] {
             "-i", map.toString(), "-o", output.toString(), "--tbx-only", "--tbx-config", temp.resolve("nested").toString()});
         ConversionResult result = new MapConverter(options).run();
-        assertEquals(1, result.buildingTbxCount());
+        assertEquals(1, result.buildingCount());
+        assertEquals(1, result.tbxCount());
+        assertEquals(0, result.lotCount(), "no TMX, so no lots");
 
-        List<Path> files;
-        try (Stream<Path> stream = Files.list(output.resolve("tbx_buildings/0_0"))) {
-            files = stream.collect(Collectors.toList());
-        }
-
-        assertEquals(1, files.size());
-        assertEquals("0_0_b0000_kitchen_100_40.tbx", files.get(0).getFileName().toString());
-        Building reread = TbxReader.read(files.get(0));
-        assertEquals("100", reread.properties.get("WorldX"));
-        assertEquals("0", reread.properties.get("WorldZ"));
+        assertEquals(List.of("buildings.csv", "kitchen_8x6.tbx"), fileNames(output.resolve("tbx_buildings")));
+        Building reread = TbxReader.read(output.resolve("tbx_buildings/kitchen_8x6.tbx"));
+        assertTrue(reread.properties.isEmpty(), "shared TBX files carry no per-placement properties");
         assertRendersLike(original, reread);
+        assertEquals(List.of("tbx,world_x,world_y,world_z,source_cell,source_building,lot_cell", "kitchen_8x6.tbx,100,40,0,0_0,0,"),
+            readLines(output.resolve("tbx_buildings/buildings.csv")));
     }
 
     @Test
-    void withoutConfigTheOriginalTileDumpIsWritten() throws Exception {
+    void identicalBuildingsShareOneTbxPlacedAsLots() throws Exception {
         Path map = Files.createDirectories(temp.resolve("map"));
-        SyntheticMap.writeCompiledCell(map, 0, 0, 0, 1, (x, y, level) -> {
-            int bx = x - ORIGIN_X;
-            int by = y - ORIGIN_Y;
-            return bx >= 0 && by >= 0 && bx <= original.width && by <= original.height ? compiled[level][bx][by] : List.of();
-        }, TbxFixture.roomRects(original, ORIGIN_X, ORIGIN_Y));
+        // Three copies of the sample building; the third one lacks the hand-drawn decoration.
+        int[][] origins = {{ORIGIN_X, ORIGIN_Y}, {140, 40}, {100, 90}};
+        writeMap(map, origins, 2, -1);
+
         Path output = temp.resolve("out");
-        new MapConverter(ConverterOptions.parse(new String[] {"-i", map.toString(), "-o", output.toString(), "--tbx-only"})).run();
-        try (Stream<Path> stream = Files.list(output.resolve("tbx_buildings/0_0"))) {
-            Path file = stream.findFirst().orElseThrow();
-            assertEquals("0_0_b0000_kitchen_99_39.tbx", file.getFileName().toString(), "legacy name keeps the 1-square margin");
-            assertTrue(Files.readString(file, StandardCharsets.UTF_8).contains("ExteriorWall=\"0\""));
+        ConversionResult result = new MapConverter(ConverterOptions.parse(new String[] {
+            "-i", map.toString(), "-o", output.toString(), "--no-images", "--tbx-config", temp.resolve("nested").toString()})).run();
+        assertEquals(3, result.buildingCount());
+        assertEquals(2, result.tbxCount(), "the two identical buildings share a file");
+        assertEquals(3, result.lotCount());
+        assertEquals(List.of("buildings.csv", "kitchen_8x6.tbx", "kitchen_8x6_2.tbx"), fileNames(output.resolve("tbx_buildings")));
+        assertEquals(List.of("tbx,world_x,world_y,world_z,source_cell,source_building,lot_cell",
+                "kitchen_8x6.tbx,100,40,0,0_0,0,0_0", "kitchen_8x6.tbx,140,40,0,0_0,1,0_0", "kitchen_8x6_2.tbx,100,90,0,0_0,2,0_0"),
+            readLines(output.resolve("tbx_buildings/buildings.csv")));
+        assertFalse(Files.exists(output.resolve("tmx/tbx")), "no RoomDef TBX set");
+
+        String tmx = Files.readString(output.resolve("tmx/0_0.tmx"), StandardCharsets.UTF_8);
+        assertTrue(tmx.contains(" <objectgroup name=\"Lots\" level=\"0\" width=\"256\" height=\"256\">\r\n"
+            + "  <object name=\"lot\" type=\"../tbx_buildings/kitchen_8x6.tbx\" x=\"6400\" y=\"1280\" width=\"576\" height=\"224\"/>\r\n"
+            + "  <object name=\"lot\" type=\"../tbx_buildings/kitchen_8x6.tbx\" x=\"8960\" y=\"1280\" width=\"576\" height=\"224\"/>\r\n"
+            + "  <object name=\"lot\" type=\"../tbx_buildings/kitchen_8x6_2.tbx\" x=\"6400\" y=\"2880\" width=\"576\" height=\"224\"/>\r\n"
+            + " </objectgroup>"), tmx);
+        assertFalse(tmx.contains("RoomDefs"), "the lots supply every room");
+        assertRoundTrip(output, origins, 2, -1);
+    }
+
+    @Test
+    void buildingsTheTbxCannotReproduceStayInTheTmx() throws Exception {
+        assertEquals("floors_interior_tilesandwood_01_40", compiled[0][HOLE_X][HOLE_Y].get(0), "the hole removes the kitchen floor");
+        Path map = Files.createDirectories(temp.resolve("map"));
+        int[][] origins = {{ORIGIN_X, ORIGIN_Y}, {140, 40}};
+        writeMap(map, origins, -1, 1);
+        Path output = temp.resolve("out");
+        ConversionResult result = new MapConverter(ConverterOptions.parse(new String[] {
+            "-i", map.toString(), "-o", output.toString(), "--no-images", "--tbx-config", temp.resolve("nested").toString()})).run();
+        assertEquals(2, result.buildingCount());
+        assertEquals(1, result.tbxCount(), "BuildingEd cannot leave out one floor tile, so both rebuild the same");
+        assertEquals(1, result.lotCount(), "the rebuilt kitchen floor would cover the hole, so that building is not a lot");
+        assertEquals("kitchen_8x6.tbx,140,40,0,0_0,1,", readLines(output.resolve("tbx_buildings/buildings.csv")).get(2));
+
+        String tmx = Files.readString(output.resolve("tmx/0_0.tmx"), StandardCharsets.UTF_8);
+        assertTrue(tmx.contains("<object name=\"kitchen\" type=\"\" x=\"8960\" y=\"1280\""), "its rooms stay RoomDefs");
+        assertRoundTrip(output, origins, -1, 1);
+    }
+
+    @Test
+    void withoutConfigBuildingsKeepTheirTilesAsUserTiles() throws Exception {
+        Path map = Files.createDirectories(temp.resolve("map"));
+        int[][] origins = {{ORIGIN_X, ORIGIN_Y}, {140, 40}};
+        writeMap(map, origins, -1, -1);
+        Path output = temp.resolve("out");
+        ConversionResult result = new MapConverter(ConverterOptions.parse(new String[] {
+            "-i", map.toString(), "-o", output.toString(), "--no-images"})).run();
+        assertEquals(2, result.buildingCount());
+        assertEquals(1, result.tbxCount());
+        assertEquals(2, result.lotCount());
+
+        String text = Files.readString(output.resolve("tbx_buildings/kitchen_8x6.tbx"), StandardCharsets.UTF_8);
+        assertTrue(text.contains("ExteriorWall=\"0\""), "no tile entries without a config");
+        assertTrue(text.contains("<room Name=\"kitchen\""));
+        assertTrue(text.contains("<tile tile=\"walls_exterior_house_01_000\"/>"), "walls are kept as user tiles");
+        assertRoundTrip(output, origins, -1, -1);
+    }
+
+    /**
+     * Writes cell 0_0 with a copy of the sample building at each origin. Copy {@code plain} lacks the
+     * decoration; copy {@code holed} lacks one kitchen floor tile.
+     */
+    private void writeMap(Path map, int[][] origins, int plain, int holed) throws Exception {
+        List<RoomRect> rooms = new ArrayList<>();
+        int[][] buildings = new int[origins.length][];
+        for (int b = 0; b < origins.length; b++) {
+            List<RoomRect> rects = TbxFixture.roomRects(original, origins[b][0], origins[b][1]);
+            buildings[b] = new int[rects.size()];
+            for (int r = 0; r < rects.size(); r++) {
+                buildings[b][r] = rooms.size();
+                rooms.add(rects.get(r));
+            }
         }
+
+        SyntheticMap.writeCompiledCell(map, 0, 0, 0, 1, (x, y, level) -> compiledAt(origins, plain, holed, x, y, level), rooms,
+            buildings);
+    }
+
+    private List<String> compiledAt(int[][] origins, int plain, int holed, int x, int y, int level) {
+        for (int b = 0; b < origins.length; b++) {
+            int bx = x - origins[b][0];
+            int by = y - origins[b][1];
+            if (bx >= 0 && by >= 0 && bx <= original.width && by <= original.height) {
+                List<String> stack = compiled[level][bx][by];
+                if (b == plain) {
+                    stack = new ArrayList<>(stack);
+                    stack.remove(TbxFixture.DECOR);
+                }
+
+                if (b == holed && level == 0 && bx == HOLE_X && by == HOLE_Y) {
+                    stack = new ArrayList<>(stack.subList(1, stack.size()));
+                }
+
+                return stack;
+            }
+        }
+
+        return level == 0 ? List.of(TbxFixture.GROUND) : List.of();
+    }
+
+    /**
+     * Rebuilds every square of cell 0_0 the way WorldEd does when it generates lots: the TMX tiles
+     * plus the tiles each lot's TBX renders. The result must be exactly the compiled map.
+     */
+    private void assertRoundTrip(Path output, int[][] origins, int plain, int holed) throws Exception {
+        Path tmxFile = output.resolve("tmx/0_0.tmx");
+        org.w3c.dom.Element root = MapConverterTest.parse(tmxFile).getDocumentElement();
+        java.util.TreeMap<Integer, String> tileSets = new java.util.TreeMap<>();
+        java.util.Map<String, List<String>> squares = new java.util.HashMap<>();
+        TbxLayout layout = new TbxLayout(config);
+        org.w3c.dom.NodeList children = root.getChildNodes();
+        for (int c = 0; c < children.getLength(); c++) {
+            if (!(children.item(c) instanceof org.w3c.dom.Element element)) {
+                continue;
+            }
+
+            switch (element.getTagName()) {
+                case "tileset" -> tileSets.put(Integer.parseInt(element.getAttribute("firstgid")), element.getAttribute("name"));
+                case "layer" -> {
+                    int level = Integer.parseInt(element.getAttribute("level"));
+                    String[] gids = element.getTextContent().trim().split("[,\\s]+");
+                    for (int i = 0; i < gids.length; i++) {
+                        int gid = Integer.parseInt(gids[i]);
+                        if (gid != 0) {
+                            java.util.Map.Entry<Integer, String> tileSet = tileSets.floorEntry(gid);
+                            squares.computeIfAbsent(level + "," + (i % 256) + "," + (i / 256), k -> new ArrayList<>())
+                                .add(tileSet.getValue() + "_" + (gid - tileSet.getKey()));
+                        }
+                    }
+                }
+                case "objectgroup" -> {
+                    if (!element.getAttribute("name").equals("Lots")) {
+                        continue;
+                    }
+
+                    int level = Integer.parseInt(element.getAttribute("level"));
+                    org.w3c.dom.NodeList lots = element.getElementsByTagName("object");
+                    for (int l = 0; l < lots.getLength(); l++) {
+                        org.w3c.dom.Element lot = (org.w3c.dom.Element) lots.item(l);
+                        Building building = TbxReader.read(tmxFile.getParent().resolve(lot.getAttribute("type")).normalize());
+                        int lotX = Integer.parseInt(lot.getAttribute("x")) / 64;
+                        int lotY = Integer.parseInt(lot.getAttribute("y")) / 32;
+                        for (Floor floor : building.floors) {
+                            TbxLayout.RenderedFloor rendered = layout.render(building, floor);
+                            for (int x = 0; x <= building.width; x++) {
+                                for (int y = 0; y <= building.height; y++) {
+                                    for (Object[] tile : rendered.stack(x, y)) {
+                                        squares.computeIfAbsent((level + floor.index) + "," + (lotX + x) + "," + (lotY + y),
+                                            k -> new ArrayList<>()).add(tile[1].toString());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                default -> {
+                }
+            }
+        }
+
+        for (int level = 0; level <= 1; level++) {
+            for (int x = 0; x < 256; x++) {
+                for (int y = 0; y < 256; y++) {
+                    List<String> expected = new ArrayList<>(compiledAt(origins, plain, holed, x, y, level));
+                    List<String> actual = squares.getOrDefault(level + "," + x + "," + y, new ArrayList<>());
+                    expected.sort(null);
+                    actual.sort(null);
+                    assertEquals(expected, actual, "level " + level + " square " + x + "," + y);
+                }
+            }
+        }
+    }
+
+    private static List<String> fileNames(Path directory) throws Exception {
+        try (Stream<Path> stream = Files.list(directory)) {
+            return stream.map(path -> path.getFileName().toString()).sorted().collect(Collectors.toList());
+        }
+    }
+
+    private static List<String> readLines(Path file) throws Exception {
+        String text = Files.readString(file, StandardCharsets.UTF_8);
+        assertTrue(text.startsWith("﻿"), "UTF-8 BOM");
+        return List.of(text.substring(1).split("\r\n"));
     }
 
     private void assertRendersLike(Building expected, Building actual) {

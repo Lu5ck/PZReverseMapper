@@ -942,6 +942,20 @@ final class TbxLayout {
         }
     }
 
+    /** Whether a furniture object draws {@code tile} on building square (x, y), as {@link #placeFurniture} does. */
+    static boolean furnitureTileAt(Furniture furniture, int x, int y, String tile) {
+        FurnitureEntry entry = furniture.resolved();
+        String layer = furniture.def.layer;
+        if (layer.equals("Walls")) {
+            return false;
+        }
+
+        boolean shifted = layer.equals("RoofCap") || layer.equals("Frames") || layer.equals("Doors");
+        int dx = shifted && furniture.orient.equals("E") ? 1 : 0;
+        int dy = shifted && furniture.orient.equals("S") ? 1 : 0;
+        return tile.equals(entry.tile(x - furniture.x - dx, y - furniture.y - dy));
+    }
+
     private void placeFurniture(Furniture furniture, Square[][] squares, int width, int height) {
         FurnitureEntry entry = furniture.resolved();
         String layer = furniture.def.layer;

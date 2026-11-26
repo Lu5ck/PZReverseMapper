@@ -45,8 +45,9 @@ public final class Cli {
             out.println("Objects:      " + result.objectCount());
             out.println("Images:       " + result.imageCount());
             out.println("Tile images:  " + result.tileImageCount());
-            out.println("TBX files:    " + result.tbxCount());
-            out.println("Buildings:    " + result.buildingTbxCount());
+            out.println("Buildings:    " + result.buildingCount());
+            out.println("TBX files:    " + result.tbxCount() + " unique");
+            out.println("Lots:         " + result.lotCount());
             out.println("Tilesets:     " + result.tileSetCount());
             out.println("Elapsed:      " + MapConverter.formatElapsed(result.elapsed()));
             out.println("Output:       " + result.outputDirectory());

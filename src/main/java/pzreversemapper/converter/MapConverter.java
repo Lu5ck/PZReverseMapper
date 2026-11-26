@@ -86,22 +86,27 @@ public final class MapConverter {
         report("Grid", "Building target cell grid");
         createTargetCellGrid(headerList);
         readLotPacks(headerList, tileSets);
+        report("Tiles", "Finalizing tilesets");
+        tileSets.build();
+        // Buildings come first: rooms and tiles drawn by their lots are left out of the TMX.
+        BuildingTbxWriter buildingTbxWriter = null;
+        if (options.exportBuildingTbx()) {
+            buildingTbxWriter = new BuildingTbxWriter(options.outputDirectory(), targetCellSize, targetCells, buildingConfig,
+                !options.tbxOnly(), tileSets::tmxTileName);
+            report("Building TBX", buildingConfig != null ? "Rebuilding BuildingEd buildings" : "Writing building TBX files");
+            buildingTbxWriter.write(headerList);
+            String summary = describeBuildings(buildingTbxWriter);
+            report("TBX rebuild", summary);
+            System.out.println(summary);
+        } else {
+            report("Building TBX", "Skipping building TBX files");
+        }
+
         report("Rooms", "Reprojecting RoomDefs");
-        reprojectRooms(headerList);
+        reprojectRooms(headerList, buildingTbxWriter);
         boolean writeObjects = options.exportObjects() && !options.tbxOnly();
         report("Objects", writeObjects ? "Reading objects.lua" : "Skipping objects.lua");
         List<MapObject> objects = writeObjects ? readObjects() : List.of();
-        BuildingTbxWriter buildingTbxWriter = new BuildingTbxWriter(options.outputDirectory(), targetCellSize, targetCells, buildingConfig);
-        report("Building TBX", !options.exportBuildingTbx() ? "Skipping building TBX pack"
-            : buildingConfig != null ? "Rebuilding BuildingEd buildings" : "Writing building TBX pack");
-        int buildingTbxCount = options.exportBuildingTbx() ? buildingTbxWriter.write(headerList) : 0;
-        if (buildingConfig != null) {
-            String summary = describeReconstruction(buildingTbxWriter);
-            report("TBX rebuild", summary);
-            System.out.println(summary);
-        }
-        report("Tiles", "Finalizing tilesets");
-        tileSets.build();
         boolean writeImages = options.exportImages() && !options.tbxOnly();
         report("Images", writeImages ? "Writing preview images" : "Skipping preview images");
         int imageCount = 0;
@@ -115,20 +120,12 @@ public final class MapConverter {
             }
         }
 
-        TmxWriter tmxWriter = new TmxWriter(
-            options.outputDirectory(),
-            targetCellSize,
-            tileSets,
-            options.exportRoomTbx(),
-            shouldWriteTmxLevelAttributes(headerList));
-        List<TargetCell> orderedCells = new ArrayList<>(targetCells.values());
-        orderedCells.sort(Comparator.comparingInt((TargetCell cell) -> cell.coord().x()).thenComparingInt(cell -> cell.coord().y()));
-        for (int i = 0; i < orderedCells.size(); i++) {
-            TargetCell cell = orderedCells.get(i);
-            if (options.tbxOnly()) {
-                report("RoomDef TBX", "Writing RoomDef TBX " + cell.coord(), i + 1, orderedCells.size());
-                tmxWriter.writeRoomTbxOnly(cell);
-            } else {
+        if (!options.tbxOnly()) {
+            TmxWriter tmxWriter = new TmxWriter(options.outputDirectory(), targetCellSize, tileSets, shouldWriteTmxLevelAttributes(headerList));
+            List<TargetCell> orderedCells = new ArrayList<>(targetCells.values());
+            orderedCells.sort(Comparator.comparingInt((TargetCell cell) -> cell.coord().x()).thenComparingInt(cell -> cell.coord().y()));
+            for (int i = 0; i < orderedCells.size(); i++) {
+                TargetCell cell = orderedCells.get(i);
                 report("TMX", "Writing TMX " + cell.coord(), i + 1, orderedCells.size());
                 tmxWriter.write(cell);
             }
@@ -157,8 +154,9 @@ public final class MapConverter {
             objects.size(),
             imageCount,
             tileImageCount,
-            tmxWriter.tbxCount(),
-            buildingTbxCount,
+            buildingTbxWriter == null ? 0 : buildingTbxWriter.uniqueCount(),
+            buildingTbxWriter == null ? 0 : buildingTbxWriter.buildingCount(),
+            buildingTbxWriter == null ? 0 : buildingTbxWriter.lotCount(),
             tileSets.tileSets().size(),
             elapsed,
             options.outputDirectory(),
@@ -180,6 +178,7 @@ public final class MapConverter {
             0,
             0,
             extraction.totalImageCount(),
+            0,
             0,
             0,
             extraction.tileSheetCount(),
@@ -204,8 +203,8 @@ public final class MapConverter {
             }
         }
 
-        if (options.tbxOnly() && !options.exportRoomTbx() && !options.exportBuildingTbx()) {
-            throw new IllegalStateException("TBX only requires RoomDef TBX and/or Building TBX to be enabled.");
+        if (options.tbxOnly() && !options.exportBuildingTbx()) {
+            throw new IllegalStateException("TBX only requires building TBX export to be enabled.");
         }
     }
 
@@ -219,11 +218,33 @@ public final class MapConverter {
         }
     }
 
-    private static String describeReconstruction(BuildingTbxWriter writer) {
+    private static String describeBuildings(BuildingTbxWriter writer) {
+        String text = (writer.rebuilt() ? "Rebuilt " : "Wrote ") + writer.buildingCount() + " building(s) as " + writer.uniqueCount()
+            + " unique TBX file(s)";
+        if (writer.placesLots()) {
+            text += ", " + writer.lotCount() + " placed as lots";
+            List<String> kept = new ArrayList<>();
+            if (writer.crossingCount() > 0) {
+                kept.add(writer.crossingCount() + " crossing a TMX cell border");
+            }
+
+            if (writer.inexactCount() > 0) {
+                kept.add(writer.inexactCount() + " not reproduced exactly");
+            }
+
+            if (!kept.isEmpty()) {
+                text += " (kept as TMX tiles: " + String.join(", ", kept) + ")";
+            }
+        }
+
+        if (!writer.rebuilt()) {
+            return text;
+        }
+
         TbxReconstructor.Stats stats = writer.stats();
         int total = stats.buildingTiles();
         String percent = total == 0 ? "100" : String.format(java.util.Locale.ROOT, "%.1f", stats.reproduced * 100.0 / total);
-        return "Rebuilt " + writer.reconstructedCount() + " building(s): " + percent + "% of " + total + " building tiles reproduced ("
+        return text + ": " + percent + "% of " + total + " building tiles reproduced ("
             + stats.userTiles + " kept as user tiles, " + stats.unmatched + " not reproduced, " + stats.extra + " extra); "
             + stats.doors + " doors, " + stats.windows + " windows, " + stats.stairs + " stairs, " + stats.furniture + " furniture";
     }
@@ -412,11 +433,13 @@ public final class MapConverter {
         }
     }
 
-    private void reprojectRooms(Collection<LotHeaderData> headers) {
+    /** Copies RoomDefs into the target cells, except rooms drawn by a building lot. */
+    private void reprojectRooms(Collection<LotHeaderData> headers, BuildingTbxWriter buildings) {
         int size = this.targetCellSize;
         for (LotHeaderData header : headers) {
             for (RoomRect room : header.rooms()) {
-                if (room.width() <= 0 || room.height() <= 0) {
+                if (room.width() <= 0 || room.height() <= 0
+                    || (buildings != null && buildings.isLotRoom(header.cellX(), header.cellY(), room.sourceRoomId()))) {
                     continue;
                 }
 

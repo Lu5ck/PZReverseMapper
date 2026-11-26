@@ -10,41 +10,38 @@ This export is based on Project Zomboid Build 42 compiled map files and was gene
 
 - Project Zomboid Build 42 map data
 - Compiled `.lotheader` and `.lotpack` files decoded
-- Build 42 source cells, originally `256x256`, reprojected to WorldEd-style `300x300` TMX cells
+- Build 42 source cells kept on their native `256x256` grid (a `native-256` WorldEd project)
 - Variable Z levels preserved where present in the compiled data
 - Tiles exported at their decoded floor, layer, and world position
-- RoomDefs exported and linked from TMX files
+- Buildings exported as BuildingEd TBX files and placed back on the map as WorldEd lots
+- Identical buildings share one TBX file
 - `objects.lua` parsed and restored into the `.pzw` project
 - Objects are visible and editable in WorldEd
-- Supplemental building TBX files exported in parallel for inspection/reuse
 
 ## Generated Files
 
 - `Kentucky_full.pzw`  
-  Full WorldEd project with TMX cells, RoomDefs, and objects.
+  Full WorldEd project with TMX cells, building lots, RoomDefs, and objects.
 
 - `tmx/`  
-  Reconstructed `300x300` TMX cells.
+  Reconstructed `256x256` TMX cells. Each cell places its buildings as lots.
 
-- `tmx/tbx/<cell>/`  
-  RoomDef TBX files referenced by the TMX files.
+- `tbx_buildings/`  
+  One BuildingEd TBX file per unique building, referenced by the lots.
 
-- `tbx_buildings/<source-cell>/`  
-  Experimental building-level TBX files reconstructed from compiled building room ids.
+- `tbx_buildings/buildings.csv`  
+  Every compiled building with its TBX file, world position and TMX cell.
 
 ## About The TBX Export
 
-Each RoomDef is still exported room-by-room so WorldEd can load and display the map correctly.
+Every compiled building is rebuilt as a BuildingEd building, grouping the rooms that belong to the same compiled building. Buildings that come out identical share one TBX file, and each building is placed back on its TMX cell as a WorldEd lot. The tiles and rooms a lot draws are left out of the TMX, so WorldEd does not stack them twice; ground and vegetation stay in the TMX.
 
-In addition, this export contains a separate building TBX dump. These files are not the original source TBX files from The Indie Stone. They are reconstructed from compiled lot data by grouping rooms belonging to the same compiled building and cropping the decoded tiles around that building.
-
-This makes it possible to inspect, sort, reuse, or package vanilla buildings separately, but it should be considered a reconstruction rather than a perfect recovery of the original building files.
+These files are not the original source TBX files from The Indie Stone. They are reconstructions from compiled lot data, which makes it possible to edit, sort, reuse, or package vanilla buildings separately.
 
 Known limitations:
 
 - Original TBX metadata and tile categories are not fully recoverable from the compiled map.
-- Building TBX files are exported for inspection and reuse, not currently linked back into the TMX map.
-- Some exterior context is intentionally filtered from building TBX files, such as `blends_natural_01_*` ground tiles.
+- Buildings that do not fit in one TMX cell, or that a TBX cannot reproduce exactly, keep their tiles and RoomDefs in the TMX.
 - Room names, room masks, floors, walls, furniture, and decoded tile layers are preserved as far as the compiled data allows.
 
 ## Requirements

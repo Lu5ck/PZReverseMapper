@@ -79,7 +79,7 @@ final class MainWindow extends JFrame {
         "B42 source 256 -> TMX 256",
         "v41 source 300 -> TMX 300",
         "Map only - no TBX",
-        "TBX only - rooms/buildings",
+        "TBX only - buildings",
         "Custom"
     };
 
@@ -110,8 +110,7 @@ final class MainWindow extends JFrame {
     private final JCheckBox imagesBox = new JCheckBox("Images");
     private final JCheckBox tilePacksBox = new JCheckBox("Tile sheets");
     private final JCheckBox objectsBox = new JCheckBox("Objects");
-    private final JCheckBox roomTbxBox = new JCheckBox("RoomDef TBX");
-    private final JCheckBox buildingTbxBox = new JCheckBox("Building TBX pack");
+    private final JCheckBox buildingTbxBox = new JCheckBox("Building TBX");
     private final JCheckBox tbxOnlyBox = new JCheckBox("TBX only");
     private final JTextArea commandBox = new JTextArea();
     private final JTextArea logBox = new JTextArea();
@@ -221,7 +220,7 @@ final class MainWindow extends JFrame {
 
         JPanel checks = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         checks.setOpaque(false);
-        for (JCheckBox checkBox : new JCheckBox[] {cleanBox, imagesBox, tilePacksBox, objectsBox, roomTbxBox, buildingTbxBox, tbxOnlyBox}) {
+        for (JCheckBox checkBox : new JCheckBox[] {cleanBox, imagesBox, tilePacksBox, objectsBox, buildingTbxBox, tbxOnlyBox}) {
             checkBox.setOpaque(false);
             checkBox.setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 18));
             checks.add(checkBox);
@@ -365,7 +364,6 @@ final class MainWindow extends JFrame {
         imagesBox.setSelected(true);
         tilePacksBox.setSelected(false);
         objectsBox.setSelected(true);
-        roomTbxBox.setSelected(true);
         buildingTbxBox.setSelected(true);
         tbxOnlyBox.setSelected(false);
         useModTilesBox.setSelected(false);
@@ -384,7 +382,7 @@ final class MainWindow extends JFrame {
         onSelectionChanged(sourceProfileBox, this::markCustomAndRefresh);
         onSelectionChanged(targetGridBox, this::markCustomAndRefresh);
 
-        for (JCheckBox checkBox : new JCheckBox[] {cleanBox, imagesBox, tilePacksBox, objectsBox, roomTbxBox, buildingTbxBox}) {
+        for (JCheckBox checkBox : new JCheckBox[] {cleanBox, imagesBox, tilePacksBox, objectsBox, buildingTbxBox}) {
             checkBox.addItemListener(event -> markCustomAndRefresh());
         }
 
@@ -430,9 +428,8 @@ final class MainWindow extends JFrame {
         imagesBox.setToolTipText("Writes per-cell and merged PNG map previews used by the map workflow.");
         tilePacksBox.setToolTipText("When selected alone, extracts tiles without reading lotheaders or lotpacks.");
         objectsBox.setToolTipText("Reads objects.lua and writes objects into the PZW project.");
-        roomTbxBox.setToolTipText("Writes one TBX per RoomDef under tmx/tbx/<cell>.");
-        buildingTbxBox.setToolTipText("Writes supplemental building TBX files under tbx_buildings/<source-cell>.");
-        tbxOnlyBox.setToolTipText("Writes only TBX outputs. TMX, PZW and objects.lua are skipped.");
+        buildingTbxBox.setToolTipText("Writes one TBX per unique building under tbx_buildings/ and places every building as a lot in the TMX.");
+        tbxOnlyBox.setToolTipText("Writes only the building TBX files. TMX, PZW and objects.lua are skipped.");
         cellsBox.setToolTipText("Optional filter such as 46_26,46_27. Empty exports all source cells.");
         tbxConfigBox.setToolTipText("Folder holding BuildingTiles.txt, BuildingFurniture.txt and TMXConfig.txt from PZ_Mapping_Tools. "
             + "Building TBX files are then rebuilt with rooms, walls, floors, doors, windows, stairs and furniture.");
@@ -453,11 +450,11 @@ final class MainWindow extends JFrame {
 
         isApplyingPreset = true;
         switch (workflowPresetBox.getSelectedIndex()) {
-            case 0 -> applyPreset(0, GRID_AUTO, true, true, true, true, false);
-            case 1 -> applyPreset(PROFILE_B42, GRID_256, true, true, true, true, false);
-            case 2 -> applyPreset(1, GRID_300, true, true, true, true, false);
-            case 3 -> applyPreset(0, GRID_AUTO, true, true, false, false, false);
-            case 4 -> applyPreset(0, GRID_AUTO, false, false, true, true, true);
+            case 0 -> applyPreset(0, GRID_AUTO, true, true, true, false);
+            case 1 -> applyPreset(PROFILE_B42, GRID_256, true, true, true, false);
+            case 2 -> applyPreset(1, GRID_300, true, true, true, false);
+            case 3 -> applyPreset(0, GRID_AUTO, true, true, false, false);
+            case 4 -> applyPreset(0, GRID_AUTO, false, false, true, true);
             default -> {
             }
         }
@@ -468,14 +465,12 @@ final class MainWindow extends JFrame {
         updateCommandPreview();
     }
 
-    private void applyPreset(int sourceProfile, int targetGrid, boolean images, boolean objects, boolean roomTbx, boolean buildingTbx,
-                             boolean tbxOnly) {
+    private void applyPreset(int sourceProfile, int targetGrid, boolean images, boolean objects, boolean buildingTbx, boolean tbxOnly) {
         sourceProfileBox.setSelectedIndex(sourceProfile);
         targetGridBox.setSelectedIndex(targetGrid);
         imagesBox.setSelected(images);
         tilePacksBox.setSelected(false);
         objectsBox.setSelected(objects);
-        roomTbxBox.setSelected(roomTbx);
         buildingTbxBox.setSelected(buildingTbx);
         tbxOnlyBox.setSelected(tbxOnly);
     }
@@ -546,7 +541,7 @@ final class MainWindow extends JFrame {
                 appendLog("BuildingEd:     " + buildingConfig.entryCount() + " tile entries, " + buildingConfig.furnitureCount()
                     + " furniture (" + buildingConfig.directory() + ")");
             } else {
-                appendLog("BuildingEd:     not set (building TBX files are plain tile dumps)");
+                appendLog("BuildingEd:     not set (building TBX files keep their tiles as user tiles)");
             }
             statusLabel.setText("Validation OK - " + inspection.sourceCellCount() + " source cell(s), "
                 + inspection.estimatedTargetCellCount() + " target TMX cell(s).");
@@ -606,8 +601,9 @@ final class MainWindow extends JFrame {
                     appendLog("Objects:        " + result.objectCount());
                     appendLog("Images:         " + result.imageCount());
                     appendLog("Tile images:    " + result.tileImageCount());
-                    appendLog("RoomDef TBX:    " + result.tbxCount());
-                    appendLog("Building TBX:   " + result.buildingTbxCount());
+                    appendLog("Buildings:      " + result.buildingCount());
+                    appendLog("TBX files:      " + result.tbxCount() + " unique");
+                    appendLog("Lots:           " + result.lotCount());
                     appendLog("Tilesets:       " + result.tileSetCount());
                     appendLog("Elapsed:        " + MapConverter.formatElapsed(result.elapsed()));
                     appendLog("Project:        " + (Text.isNullOrWhiteSpace(result.projectFile()) ? "not written" : result.projectFile()));
@@ -716,8 +712,8 @@ final class MainWindow extends JFrame {
             throw new IllegalStateException("Input and output folders must be different.");
         }
 
-        if (tbxOnlyBox.isSelected() && !roomTbxBox.isSelected() && !buildingTbxBox.isSelected()) {
-            throw new IllegalStateException("TBX only requires RoomDef TBX and/or Building TBX to be enabled.");
+        if (tbxOnlyBox.isSelected() && !buildingTbxBox.isSelected()) {
+            throw new IllegalStateException("TBX only requires Building TBX to be enabled.");
         }
 
         if (sourceProfileBox.getSelectedIndex() == PROFILE_B42 && targetGridBox.getSelectedIndex() == GRID_300) {
@@ -765,7 +761,6 @@ final class MainWindow extends JFrame {
             .exportImages(imagesBox.isSelected() && !tbxOnlyBox.isSelected())
             .exportTilePacks(tilePacksBox.isSelected())
             .exportObjects(objectsBox.isSelected() && !tbxOnlyBox.isSelected())
-            .exportRoomTbx(roomTbxBox.isSelected())
             .exportBuildingTbx(buildingTbxBox.isSelected())
             .tbxOnly(tbxOnlyBox.isSelected())
             .tilesOnly(tilesOnly)
@@ -778,7 +773,6 @@ final class MainWindow extends JFrame {
         return tilePacksBox.isSelected()
             && !imagesBox.isSelected()
             && !objectsBox.isSelected()
-            && !roomTbxBox.isSelected()
             && !buildingTbxBox.isSelected()
             && !tbxOnlyBox.isSelected();
     }
@@ -899,10 +893,6 @@ final class MainWindow extends JFrame {
 
         if (!objectsBox.isSelected() && !tbxOnlyBox.isSelected()) {
             args.add("--no-objects");
-        }
-
-        if (!roomTbxBox.isSelected()) {
-            args.add("--no-room-tbx");
         }
 
         if (!buildingTbxBox.isSelected()) {

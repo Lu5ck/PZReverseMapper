@@ -26,7 +26,9 @@ grid and can optionally be reprojected to 256 × 256 through world coordinates.
 - Optionally reproject legacy v41 300 × 300 maps to native 256 × 256 cells.
 - Preserve tile layers, rooms, buildings and level information.
 - Restore `objects.lua` objects in the generated PZW project.
-- Export RoomDef TBX files and supplemental reconstructed building TBX files.
+- Export every compiled building as a BuildingEd TBX file. Identical buildings
+  share one file, and each building is placed back on its TMX cell as a WorldEd
+  lot, so the map holds no duplicate building tiles or RoomDefs.
 - With the BuildingEd config files from
   [PZ_Mapping_Tools](https://github.com/Unjammer/PZ_Mapping_Tools), rebuild
   building TBX files as real BuildingEd buildings: rooms, exterior and interior
@@ -189,13 +191,42 @@ Pass `--tiles <media>` as well: BuildingEd's grime and window rules read tile
 properties from the game's `.tiles` files. Roofs and wall-layer furniture are
 kept as user-drawn tiles (the building's default roof style is still set).
 
+Without `--tbx-config`, each building TBX holds the building's rooms and keeps
+its tiles as user-drawn tiles.
+
+### Shared buildings and lots
+
+Maps often repeat the same building many times. Buildings whose rebuilt TBX
+comes out identical (ignoring where they stand) share one file in
+`tbx_buildings/`, named after the first room and the building size, for example
+`hall_3x7.tbx`, then `hall_3x7_2.tbx` for a different building with the same
+name and size. `tbx_buildings/buildings.csv` lists every compiled building with
+its TBX file, world position, source cell and building id, and the TMX cell it
+was placed in.
+
+Each building is placed back on its TMX cell as a WorldEd lot
+(`<object name="lot" type="../tbx_buildings/<file>.tbx"/>` in a `Lots` object
+group on the building's level). The tiles the lot draws and the building's rooms
+are left out of the TMX layers and RoomDefs, so WorldEd does not stack them
+twice when it generates lots. Map ground and vegetation around and under the
+building stay in the TMX.
+
+A building is not placed as a lot, and keeps its tiles and RoomDefs in the TMX,
+when it does not fit in one TMX cell (its east and south walls included), or
+when its rebuilt TBX would draw tiles that are not in the compiled map (for
+example a room floor across a square that has none). Placing lots therefore
+never changes the map: the TMX tiles plus the tiles the lots draw are exactly
+the compiled tiles. The console summary reports how many buildings were placed
+and why any were not.
+
 ## Main outputs
 
-- `tmx/*.tmx` — editable map cells
+- `tmx/*.tmx` — editable map cells, with building lots
 - `<project>.pzw` — WorldEd project (marked `native-256` for 256 × 256 exports)
-- `tmx/tbx/<cell>/*.tbx` — RoomDef TBX files
-- `tbx_buildings/<source-cell>/*.tbx` — one TBX per compiled building: a
-  rebuilt BuildingEd building with `--tbx-config`, otherwise a plain tile dump
+- `tbx_buildings/*.tbx` — one TBX per unique building: a rebuilt BuildingEd
+  building with `--tbx-config`, otherwise rooms with user-drawn tiles
+- `tbx_buildings/buildings.csv` — every compiled building, its TBX file and
+  position
 - `maps_img/*` — per-cell previews
 - `Map.png`, `Map_veg.png`, `world.png` — merged map previews
 - `Map_ZombieSpawnMap.png` — zombie-density preview when available
@@ -204,7 +235,7 @@ kept as user-drawn tiles (the building's default roof style is still set).
 - `TilesSingle/<logical-pack>/<tileset>/*.png` — restored individual tiles
 - `Tiles/<logical-pack>/*.png` — reconstructed eight-column tilesets
 
-Text outputs (TMX, PZW, TBX) are written as UTF-8 with a byte order mark and
+Text outputs (TMX, PZW, TBX, CSV) are written as UTF-8 with a byte order mark and
 CRLF line endings on every platform, exactly like the original Windows tool,
 so exports are interchangeable between machines.
 
@@ -261,7 +292,7 @@ macOS and Linux and keeps the jar as a downloadable build artifact.
   (Windows) or Trash (macOS, Linux) and never deleted permanently; if the
   system offers no trash, the clean is refused and nothing is removed.
 - Reverse-engineered formats can change between Project Zomboid builds.
-- Reconstructed building TBX files are supplemental exports, not original
+- Reconstructed building TBX files are reconstructions, not original
   authoring-source files. Properties that leave no trace in compiled data
   (for example a ceiling hidden under the floor above) cannot be recovered.
 - Always validate a small area before processing a complete map.

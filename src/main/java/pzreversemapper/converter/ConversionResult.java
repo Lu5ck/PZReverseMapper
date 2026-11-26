@@ -9,8 +9,12 @@ public record ConversionResult(
     int objectCount,
     int imageCount,
     int tileImageCount,
+    /** Distinct building TBX files under {@code tbx_buildings/}. */
     int tbxCount,
-    int buildingTbxCount,
+    /** Compiled buildings exported; identical buildings share a TBX file. */
+    int buildingCount,
+    /** Buildings placed on the TMX cells as WorldEd lots. */
+    int lotCount,
     int tileSetCount,
     Duration elapsed,
     String outputDirectory,

@@ -25,7 +25,6 @@ public final class ConverterOptions {
     private final boolean exportImages;
     private final boolean exportTilePacks;
     private final boolean exportObjects;
-    private final boolean exportRoomTbx;
     private final boolean exportBuildingTbx;
     private final boolean tbxOnly;
     private final boolean tilesOnly;
@@ -48,7 +47,6 @@ public final class ConverterOptions {
         exportImages = builder.exportImages;
         exportTilePacks = builder.exportTilePacks;
         exportObjects = builder.exportObjects;
-        exportRoomTbx = builder.exportRoomTbx;
         exportBuildingTbx = builder.exportBuildingTbx;
         tbxOnly = builder.tbxOnly;
         tilesOnly = builder.tilesOnly;
@@ -113,10 +111,6 @@ public final class ConverterOptions {
         return exportObjects;
     }
 
-    public boolean exportRoomTbx() {
-        return exportRoomTbx;
-    }
-
     public boolean exportBuildingTbx() {
         return exportBuildingTbx;
     }
@@ -136,7 +130,7 @@ public final class ConverterOptions {
 
     /**
      * Folder with the BuildingEd config files (BuildingTiles.txt, BuildingFurniture.txt, TMXConfig.txt)
-     * from PZ_Mapping_Tools, used to rebuild building TBX files; {@code null} for the plain tile dump.
+     * from PZ_Mapping_Tools, used to rebuild building TBX files; {@code null} keeps building tiles as user tiles.
      */
     public String tbxConfigPath() {
         return tbxConfigPath;
@@ -183,7 +177,6 @@ public final class ConverterOptions {
         boolean exportImages = true;
         boolean exportTilePacks = false;
         boolean exportObjects = true;
-        boolean exportRoomTbx = true;
         boolean exportBuildingTbx = true;
         boolean tbxOnly = false;
         boolean tilesOnly = false;
@@ -230,11 +223,12 @@ public final class ConverterOptions {
                     exportTilePacks = true;
                     exportImages = false;
                     exportObjects = false;
-                    exportRoomTbx = false;
                     exportBuildingTbx = false;
                     tbxOnly = false;
                 }
-                case "--no-room-tbx" -> exportRoomTbx = false;
+                // RoomDef TBX files are no longer written (buildings are in tbx_buildings/); kept for old scripts.
+                case "--no-room-tbx" -> {
+                }
                 case "--no-building-tbx" -> exportBuildingTbx = false;
                 case "--tbx-only" -> {
                     tbxOnly = true;
@@ -265,7 +259,6 @@ public final class ConverterOptions {
             .exportImages(exportImages)
             .exportTilePacks(exportTilePacks)
             .exportObjects(exportObjects)
-            .exportRoomTbx(exportRoomTbx)
             .exportBuildingTbx(exportBuildingTbx)
             .tbxOnly(tbxOnly)
             .tilesOnly(tilesOnly)
@@ -353,13 +346,12 @@ public final class ConverterOptions {
         out.println("                                 Build 42 256x256 maps always stay 256");
         out.println("  --cells X_Y[,X_Y...]           Optional source-cell filter, for example 46_26,46_27");
         out.println("  --clean                        Move existing output contents to the Recycle Bin/Trash after confirmation");
-        out.println("  --tbx-only                     Write TBX outputs only; skip TMX, PZW, and objects.lua");
+        out.println("  --tbx-only                     Write the building TBX files only; skip TMX, PZW, and objects.lua");
         out.println("  --no-images                    Do not write preview map images");
         out.println("  --extract-tiles                Extract .pack atlases from --tiles and optional --mod-tiles");
         out.println("  --tiles-only                   Extract tiles without reading map headers or lotpacks");
         out.println("  --no-objects                   Do not import objects.lua into the PZW");
-        out.println("  --no-room-tbx                  Do not write RoomDef TBX files");
-        out.println("  --no-building-tbx              Do not write supplemental building TBX files");
+        out.println("  --no-building-tbx              Do not write building TBX files or lots; the TMX keeps every tile");
         out.println("  --tbx-config <folder>          BuildingEd config folder (BuildingTiles.txt, BuildingFurniture.txt,");
         out.println("                                 TMXConfig.txt) from PZ_Mapping_Tools: rebuild building TBX files with");
         out.println("                                 rooms, walls, floors, doors, windows, stairs and furniture");
@@ -379,7 +371,6 @@ public final class ConverterOptions {
         private boolean exportImages = true;
         private boolean exportTilePacks;
         private boolean exportObjects = true;
-        private boolean exportRoomTbx = true;
         private boolean exportBuildingTbx = true;
         private boolean tbxOnly;
         private boolean tilesOnly;
@@ -442,11 +433,6 @@ public final class ConverterOptions {
 
         public Builder exportObjects(boolean value) {
             exportObjects = value;
-            return this;
-        }
-
-        public Builder exportRoomTbx(boolean value) {
-            exportRoomTbx = value;
             return this;
         }
 

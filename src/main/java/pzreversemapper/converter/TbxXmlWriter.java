@@ -1,6 +1,8 @@
 package pzreversemapper.converter;
 
 import java.io.IOException;
+import java.io.StringWriter;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -53,7 +55,19 @@ final class TbxXmlWriter {
     }
 
     static void write(Building building, Path file) throws IOException {
-        new TbxXmlWriter(building).write(file);
+        TextFileWriter.writeFile(file, toXml(building));
+    }
+
+    /** The complete TBX document, as written to disk (without the byte order mark). */
+    static String toXml(Building building) {
+        StringWriter text = new StringWriter(1 << 14);
+        try (TextFileWriter out = new TextFileWriter(text)) {
+            new TbxXmlWriter(building).write(out);
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+        }
+
+        return text.toString();
     }
 
     private void collectEntries() {
@@ -109,58 +123,56 @@ final class TbxXmlWriter {
         return index == null || index < 0 ? "0" : index.toString();
     }
 
-    private void write(Path file) throws IOException {
-        try (TextFileWriter out = new TextFileWriter(file)) {
-            out.writeLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-            StringBuilder start = new StringBuilder("<building version=\"4\" width=\"" + building.width + "\" height=\"" + building.height + "\"");
-            for (String slot : TbxModel.BUILDING_TILES) {
-                start.append(' ').append(slot).append("=\"").append(index(building.tile(slot))).append('"');
-            }
-
-            out.writeLine(start + ">");
-            writeProperties(out);
-            for (TileEntry entry : entries) {
-                writeEntry(out, entry);
-            }
-
-            for (FurnitureDef def : furniture) {
-                writeFurniture(out, def);
-            }
-
-            out.writeLine(" <user_tiles>");
-            for (String tile : userTiles) {
-                out.writeLine("  <tile tile=\"" + Text.xmlEscape(tile) + "\"/>");
-            }
-
-            out.writeLine(" </user_tiles>");
-            List<String> used = new ArrayList<>();
-            for (int i = 1; i <= entries.size(); i++) {
-                used.add(Integer.toString(i));
-            }
-
-            out.writeLine(" <used_tiles>" + String.join(" ", used) + "</used_tiles>");
-            List<String> usedFurniture = new ArrayList<>();
-            for (int i = 0; i < furniture.size(); i++) {
-                usedFurniture.add(Integer.toString(i));
-            }
-
-            out.writeLine(" <used_furniture>" + String.join(" ", usedFurniture) + "</used_furniture>");
-            for (Room room : building.rooms) {
-                StringBuilder line = new StringBuilder(" <room Name=\"" + Text.xmlEscape(room.name) + "\" InternalName=\""
-                    + Text.xmlEscape(room.internalName) + "\" Color=\"" + room.color[0] + " " + room.color[1] + " " + room.color[2] + "\"");
-                for (String slot : TbxModel.ROOM_TILES) {
-                    line.append(' ').append(slot).append("=\"").append(index(room.tile(slot))).append('"');
-                }
-
-                out.writeLine(line + "/>");
-            }
-
-            for (Floor floor : building.floors) {
-                writeFloor(out, floor);
-            }
-
-            out.writeLine("</building>");
+    private void write(TextFileWriter out) throws IOException {
+        out.writeLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+        StringBuilder start = new StringBuilder("<building version=\"4\" width=\"" + building.width + "\" height=\"" + building.height + "\"");
+        for (String slot : TbxModel.BUILDING_TILES) {
+            start.append(' ').append(slot).append("=\"").append(index(building.tile(slot))).append('"');
         }
+
+        out.writeLine(start + ">");
+        writeProperties(out);
+        for (TileEntry entry : entries) {
+            writeEntry(out, entry);
+        }
+
+        for (FurnitureDef def : furniture) {
+            writeFurniture(out, def);
+        }
+
+        out.writeLine(" <user_tiles>");
+        for (String tile : userTiles) {
+            out.writeLine("  <tile tile=\"" + Text.xmlEscape(tile) + "\"/>");
+        }
+
+        out.writeLine(" </user_tiles>");
+        List<String> used = new ArrayList<>();
+        for (int i = 1; i <= entries.size(); i++) {
+            used.add(Integer.toString(i));
+        }
+
+        out.writeLine(" <used_tiles>" + String.join(" ", used) + "</used_tiles>");
+        List<String> usedFurniture = new ArrayList<>();
+        for (int i = 0; i < furniture.size(); i++) {
+            usedFurniture.add(Integer.toString(i));
+        }
+
+        out.writeLine(" <used_furniture>" + String.join(" ", usedFurniture) + "</used_furniture>");
+        for (Room room : building.rooms) {
+            StringBuilder line = new StringBuilder(" <room Name=\"" + Text.xmlEscape(room.name) + "\" InternalName=\""
+                + Text.xmlEscape(room.internalName) + "\" Color=\"" + room.color[0] + " " + room.color[1] + " " + room.color[2] + "\"");
+            for (String slot : TbxModel.ROOM_TILES) {
+                line.append(' ').append(slot).append("=\"").append(index(room.tile(slot))).append('"');
+            }
+
+            out.writeLine(line + "/>");
+        }
+
+        for (Floor floor : building.floors) {
+            writeFloor(out, floor);
+        }
+
+        out.writeLine("</building>");
     }
 
     private void writeProperties(TextFileWriter out) throws IOException {

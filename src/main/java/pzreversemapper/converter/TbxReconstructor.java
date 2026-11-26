@@ -82,7 +82,11 @@ final class TbxReconstructor {
         }
     }
 
-    record Result(Building building, Stats stats, int originX, int originY, int baseLevel) {
+    /**
+     * A rebuilt building. {@code reproduced[floor][x][y][i]} tells whether the {@code i}-th tile of the
+     * compiled stack at building square (x, y) of that floor is drawn by the rebuilt building.
+     */
+    record Result(Building building, Stats stats, int originX, int originY, int baseLevel, boolean[][][][] reproduced) {
     }
 
     TbxReconstructor(BuildingEdConfig config) {
@@ -123,8 +127,13 @@ final class TbxReconstructor {
 
         Building building = new Building(width, height);
         Map<Integer, Integer> roomIndexById = new LinkedHashMap<>();
+        // Rooms are numbered by position, not by compiled id, so identical buildings give identical files.
         List<RoomRect> ordered = new ArrayList<>(roomRects);
-        ordered.sort(Comparator.comparingInt(RoomRect::floor).thenComparingInt(RoomRect::sourceRoomId));
+        ordered.sort(Comparator.comparingInt(RoomRect::floor)
+            .thenComparingInt(RoomRect::y)
+            .thenComparingInt(RoomRect::x)
+            .thenComparing(RoomRect::name, Text.CULTURE_ORDER)
+            .thenComparingInt(RoomRect::sourceRoomId));
         for (RoomRect rect : ordered) {
             roomIndexById.computeIfAbsent(rect.sourceRoomId(), id -> {
                 building.rooms.add(new Room(rect.name(), rect.name(), roomColor(rect), id));
@@ -166,18 +175,37 @@ final class TbxReconstructor {
             observed.add(stacks);
         }
 
-        List<WallSlot> slots = chooseWalls(building, observed);
-        chooseFloorsAndCeilings(building, observed);
-        chooseGrime(building, observed, slots);
         Stats stats = new Stats();
-        addDoorsAndWindows(building, observed, stats);
-        addStairs(building, observed, stats);
-        addFurniture(building, observed, stats);
-        chooseBuildingDefaults(building);
+        // Without tile entries or furniture (no BuildingEd config) the building keeps its rooms and
+        // every compiled tile as a user tile.
+        boolean rules = config.entryCount() > 0 || config.furnitureCount() > 0;
+        if (rules) {
+            List<WallSlot> slots = chooseWalls(building, observed);
+            chooseFloorsAndCeilings(building, observed);
+            chooseGrime(building, observed, slots);
+            addDoorsAndWindows(building, observed, stats);
+            addStairs(building, observed, stats);
+            addFurniture(building, observed, stats);
+            chooseBuildingDefaults(building);
+        }
+
         keepUnexplainedTiles(building, observed, stats);
-        chooseRoofDefaults(building);
-        verify(building, observed, stats);
-        return new Result(building, stats, originX, originY, minLevel);
+        // Furniture whose layer breaks the compiled stacking order is drawn twice: by the furniture
+        // object and by the user tile that restores the order. Such furniture becomes user tiles.
+        for (int pass = 0; pass < 4 && dropMisorderedFurniture(building, observed, stats); pass++) {
+            for (Floor floor : building.floors) {
+                floor.userTiles.clear();
+            }
+
+            stats.userTiles = 0;
+            keepUnexplainedTiles(building, observed, stats);
+        }
+
+        if (rules) {
+            chooseRoofDefaults(building);
+        }
+        boolean[][][][] reproduced = verify(building, observed, stats);
+        return new Result(building, stats, originX, originY, minLevel, reproduced);
     }
 
     private static boolean hasTiles(StackSource source, int originX, int originY, int width, int height, int level) {
@@ -988,8 +1016,59 @@ final class TbxReconstructor {
         }
     }
 
-    /** Renders the finished building (with user tiles) and compares it with the compiled tiles. */
-    private void verify(Building building, List<List<String>[][]> observed, Stats stats) {
+    /**
+     * Removes furniture objects that draw a tile the compiled square does not hold at that position
+     * of its stack (an "extra" tile); returns whether any was removed.
+     */
+    private boolean dropMisorderedFurniture(Building building, List<List<String>[][]> observed, Stats stats) {
+        boolean dropped = false;
+        for (Floor floor : building.floors) {
+            RenderedFloor rendered = layout.render(building, floor);
+            List<String>[][] stacks = observed.get(floor.index);
+            java.util.Set<BuildingObject> drop = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+            for (int x = 0; x <= building.width; x++) {
+                for (int y = 0; y <= building.height; y++) {
+                    List<Object[]> renderedStack = rendered.stack(x, y);
+                    int[] match = align(stacks[x][y], renderedStack);
+                    boolean[] matched = new boolean[renderedStack.size()];
+                    for (int m : match) {
+                        if (m >= 0) {
+                            matched[m] = true;
+                        }
+                    }
+
+                    for (int r = 0; r < renderedStack.size(); r++) {
+                        if (matched[r]) {
+                            continue;
+                        }
+
+                        String tile = (String) renderedStack.get(r)[1];
+                        for (BuildingObject object : floor.objects) {
+                            if (object instanceof Furniture item && TbxLayout.furnitureTileAt(item, x, y, tile)) {
+                                drop.add(item);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!drop.isEmpty()) {
+                floor.objects.removeIf(drop::contains);
+                stats.furniture -= drop.size();
+                dropped = true;
+            }
+        }
+
+        return dropped;
+    }
+
+    /**
+     * Renders the finished building (with user tiles), compares it with the compiled tiles and
+     * returns which compiled tiles it reproduces.
+     */
+    private boolean[][][][] verify(Building building, List<List<String>[][]> observed, Stats stats) {
+        boolean[][][][] reproduced = new boolean[building.floors.size()][building.width + 1][building.height + 1][];
+        stats.mapTiles = 0;
         for (Floor floor : building.floors) {
             RenderedFloor rendered = layout.render(building, floor);
             List<String>[][] stacks = observed.get(floor.index);
@@ -1001,8 +1080,11 @@ final class TbxReconstructor {
                     Room room = building.roomAt(floor, x, y);
                     boolean exterior = room == null || room.isEmptyOutside();
                     int matched = 0;
+                    boolean[] squareReproduced = new boolean[stack.size()];
+                    reproduced[floor.index][x][y] = squareReproduced;
                     for (int i = 0; i < stack.size(); i++) {
                         if (match[i] >= 0) {
+                            squareReproduced[i] = true;
                             matched++;
                         } else if (exterior && floor.worldLevel == 0 && (i == 0 || !TbxTileFilter.shouldInclude(stack.get(i)))) {
                             stats.mapTiles++;
@@ -1016,6 +1098,8 @@ final class TbxReconstructor {
                 }
             }
         }
+
+        return reproduced;
     }
 
     private int chooseUserLayer(String tile, String preferredLayer, int previous, int next, boolean[] occupied,
@@ -1146,8 +1230,9 @@ final class TbxReconstructor {
         return customEntries.computeIfAbsent(entry.key(), ignored -> entry);
     }
 
+    /** Deterministic room colour from the room name, so a room looks the same in every building. */
     private static int[] roomColor(RoomRect room) {
-        int hash = Objects.hash(room.name(), room.sourceRoomId(), room.floor());
+        int hash = Objects.hashCode(room.name()) * 31 + 7;
         return new int[] {64 + (hash & 0x7f), 64 + ((hash >> 8) & 0x7f), 64 + ((hash >> 16) & 0x7f)};
     }
 }

@@ -26,6 +26,7 @@ final class TileSetCatalog {
     private final Set<String> definitionOrderKeys = new HashSet<>();
     private final Set<String> observedTileNames = new HashSet<>();
     private final Map<String, Integer> gidCache = new HashMap<>();
+    private final Map<String, String> tmxNameCache = new HashMap<>();
     /** Tile name to the game properties BuildingEd's grime and window rules read. */
     private final Map<String, Map<String, String>> tileProperties = new HashMap<>();
     private boolean built;
@@ -152,6 +153,7 @@ final class TileSetCatalog {
         }
 
         gidCache.clear();
+        tmxNameCache.clear();
         built = true;
     }
 
@@ -168,6 +170,25 @@ final class TileSetCatalog {
         int gid = computeGid(tileName);
         gidCache.put(tileName, gid);
         return gid;
+    }
+
+    /**
+     * The tile as the TMX stores it, {@code tileset_index} with the tileset's spelling, or
+     * {@code null} when no TMX gid can represent it (a name without a numeric suffix).
+     */
+    String tmxTileName(String tileName) {
+        if (!built) {
+            throw new IllegalStateException("Tileset catalog must be built before tile lookup.");
+        }
+
+        return tmxNameCache.computeIfAbsent(tileName, name -> {
+            if (getGid(name) == 0) {
+                return "";
+            }
+
+            int index = splitIndex(name);
+            return definitions.get(Text.foldCase(name.substring(0, index))).name + "_" + Text.tryParseInt(name.substring(index + 1));
+        }).transform(name -> name.isEmpty() ? null : name);
     }
 
     private int computeGid(String tileName) {

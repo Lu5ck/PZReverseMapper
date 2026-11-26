@@ -16,6 +16,7 @@ class ConverterOptionsTest {
             "--INPUT", "in", "-o", "out", "--tiles", "media", "--mod-media", "mods", "--name", "Kentucky",
             "--source-cell-size", "256", "--target-cell-size", "300", "--cells", "46_26, 46_27;-1_3", "--clean",
             "--no-images", "--extract-tiles", "--no-objects", "--no-room-tbx", "--no-building-tbx"});
+        // --no-room-tbx is still accepted (RoomDef TBX files are no longer written).
 
         assertTrue(options.inputDirectory().endsWith("in"));
         assertTrue(options.outputDirectory().endsWith("out"));
@@ -29,7 +30,6 @@ class ConverterOptionsTest {
         assertFalse(options.exportImages());
         assertTrue(options.exportTilePacks());
         assertFalse(options.exportObjects());
-        assertFalse(options.exportRoomTbx());
         assertFalse(options.exportBuildingTbx());
         assertEquals(2, options.enumerateTilesAssetPaths().size());
     }

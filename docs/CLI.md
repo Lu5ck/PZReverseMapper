@@ -49,31 +49,42 @@ with the required `.pack` files. It is loaded after the vanilla media folder, so
 modded sheets can be added or override matching tileset metadata without copying
 anything into the game install.
 
-RoomDef TBX files are also generated under `tmx/tbx/<cell>/`. They keep the
-room mask used by WorldEd and now include a cropped `user_tiles` list plus
-per-floor `<tiles layer="...">` grids for the tiles found inside the room
-bounds.
+Every compiled building is written as a BuildingEd TBX file under
+`tbx_buildings/`. With `--tbx-config <folder>` (the BuildingEd config folder of
+PZ_Mapping_Tools, holding `BuildingTiles.txt`, `BuildingFurniture.txt` and
+`TMXConfig.txt`), each one is rebuilt as a real BuildingEd building: rooms,
+walls, trims, floors, ceilings, grime, doors, windows, curtains, shutters,
+stairs and furniture, chosen by majority vote against the config and checked by
+re-rendering with BuildingEd's layout rules. Tiles that cannot be reproduced
+stay as user-drawn tiles. Use `--tiles` too, so the grime and window rules can
+read the game's tile properties. Without `--tbx-config`, each TBX holds the
+building's rooms and keeps its tiles as user-drawn tiles.
 
-Supplemental building-level TBX files are written under
-`tbx_buildings/<source-cell>/`. With `--tbx-config <folder>` (the BuildingEd
-config folder of PZ_Mapping_Tools, holding `BuildingTiles.txt`,
-`BuildingFurniture.txt` and `TMXConfig.txt`), each one is rebuilt as a real
-BuildingEd building: rooms, walls, trims, floors, ceilings, grime, doors,
-windows, curtains, shutters, stairs and furniture, chosen by majority vote
-against the config and checked by re-rendering with BuildingEd's layout rules.
-Tiles that cannot be reproduced stay as user-drawn tiles. Use `--tiles` too, so
-the grime and window rules can read the game's tile properties. Without
-`--tbx-config` the files are plain tile dumps, as in earlier versions: These group the lotheader building room ids into
-one file per compiled building, preserve room masks per floor, and crop the
-tiles through world coordinates. They are exported for inspection/reuse and are
-not yet wired back into the TMX RoomDefs.
+Buildings whose TBX comes out identical share one file, named after the first
+room and the building size (`hall_3x7.tbx`, `hall_3x7_2.tbx`, ...).
+`tbx_buildings/buildings.csv` lists every compiled building with its TBX file,
+world position (`world_x`, `world_y`, `world_z`), source cell, source building
+id and the TMX cell it was placed in (`lot_cell`, empty when not placed).
 
-Use `--tbx-only` when you only want RoomDef/building TBX outputs. In that mode
-the converter still reads the compiled tiles and rooms, but skips `.tmx`,
-`.pzw`, preview images, and `objects.lua` writing.
+Each building is placed back on its TMX cell as a WorldEd lot: an object named
+`lot` whose type is `../tbx_buildings/<file>.tbx`, in a `Lots` object group on
+the building's level (`<level>_Lots` in classic 1.0 TMX files). The tiles the
+lot draws and the building's rooms are left out of the TMX layers and RoomDefs,
+so WorldEd does not stack them twice when it generates lots; ground and
+vegetation stay in the TMX. A building that does not fit in one TMX cell, or
+whose TBX would draw tiles that are not in the compiled map, is not placed: its
+tiles and RoomDefs stay in the TMX. The TMX tiles plus the tiles the lots draw
+are always exactly the compiled tiles.
 
-Tiles named `blends_natural_01_*` are filtered from TBX exports so the
-building files do not carry grass/ground filler captured by the boundary margin.
+Use `--no-building-tbx` to skip building TBX files and lots; the TMX then keeps
+every tile and every RoomDef. Use `--tbx-only` when you only want the building
+TBX files. In that mode the converter still reads the compiled tiles and rooms,
+but skips `.tmx`, `.pzw`, preview images, and `objects.lua` writing (and places
+no lots). `--no-room-tbx` is still accepted for old scripts but has no effect:
+RoomDef TBX files are no longer written.
+
+Ground filler and vegetation (`blends_natural_01_*`, trees, foliage, plants and
+grass overlays) under the building's outside squares stay in the TMX.
 
 ## Usage
 

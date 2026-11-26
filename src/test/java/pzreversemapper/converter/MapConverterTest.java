@@ -63,8 +63,10 @@ class MapConverterTest {
             assertEquals(3, tmxFiles.filter(p -> p.toString().endsWith(".tmx")).count());
         }
         assertTrue(Files.isRegularFile(output.resolve("Synthetic.pzw")));
-        assertTrue(result.tbxCount() > 0);
-        assertEquals(6, result.buildingTbxCount(), "3 buildings with rooms in each of two source cells");
+        assertEquals(6, result.buildingCount(), "3 buildings with rooms in each of two source cells");
+        assertTrue(result.tbxCount() > 0 && result.tbxCount() <= 6, "identical buildings share a TBX file");
+        assertEquals(4, result.lotCount(), "the shed building reaches the cell's east edge, so it stays in the TMX");
+        assertFalse(Files.exists(output.resolve("tmx/tbx")), "only the tbx_buildings set is written");
         assertEquals(3 * 3 + 3 + 1, result.imageCount() - 1, "per-cell images, merged images, zombie map (+ biome map)");
         assertTrue(Files.isRegularFile(output.resolve("biomemap.png")));
         assertTrue(Files.isRegularFile(output.resolve("Map_ZombieSpawnMap.png")));
@@ -88,8 +90,10 @@ class MapConverterTest {
         assertTrue(tmx.contains("<map version=\"2.0\" orientation=\"levelisometric\" width=\"256\" height=\"256\""));
         assertTrue(tmx.contains("\r\n"), "CRLF line endings");
         assertTrue(tmx.contains("<layer name=\"Floor\" level=\"-1\""), "basement level is kept");
-        assertTrue(tmx.contains("<objectgroup name=\"RoomDefs\" level=\"-1\""), "basement RoomDefs are kept");
-        assertTrue(tmx.contains("type=\".\\tbx\\1_1\\"), "RoomDef objects reference their TBX");
+        assertTrue(tmx.contains("<objectgroup name=\"Lots\" level=\"-1\""), "basement buildings become lots on their level");
+        assertTrue(tmx.contains("<object name=\"lot\" type=\"../tbx_buildings/"), "lots reference the shared TBX files");
+        assertFalse(tmx.contains("<object name=\"kitchen\""), "rooms drawn by lots are not repeated as RoomDefs");
+        assertTrue(tmx.contains("<object name=\"shed\" type=\"\""), "rooms of buildings left in the TMX stay RoomDefs");
     }
 
     @Test
@@ -234,7 +238,8 @@ class MapConverterTest {
         String tmx = Files.readString(output.resolve("tmx/10_10.tmx"));
         assertTrue(tmx.contains("<map version=\"1.0\""));
         assertTrue(tmx.contains("name=\"0_Floor\""));
-        assertTrue(tmx.contains("name=\"1_RoomDefs\""));
+        assertTrue(tmx.contains("<objectgroup name=\"0_Lots\" width=\"300\""), "classic maps name lot groups by level");
+        assertTrue(tmx.contains("<objectgroup name=\"1_Lots\" width=\"300\""), "the upstairs motel room is a lot on level 1");
         assertTrue(Files.isRegularFile(output.resolve("ConvertedMap.pzw")));
     }
 
@@ -245,8 +250,9 @@ class MapConverterTest {
         assertEquals(1, result.sourceCellCount());
         assertEquals("", result.projectFile());
         assertFalse(Files.exists(output.resolve("tmx/1_1.tmx")));
-        assertTrue(Files.isDirectory(output.resolve("tmx/tbx/1_1")));
-        assertTrue(Files.isDirectory(output.resolve("tbx_buildings/1_1")));
+        assertFalse(Files.exists(output.resolve("tmx")));
+        assertTrue(Files.isRegularFile(output.resolve("tbx_buildings/buildings.csv")));
+        assertEquals(3, result.buildingCount());
         assertFalse(Files.exists(output.resolve("biomemap.png")));
     }
 
@@ -259,7 +265,7 @@ class MapConverterTest {
         assertThrows(IllegalStateException.class,
             () -> new MapConverter(b42Options().outputDirectory(fixture.resolve("map").toString()).build()).run());
         assertThrows(IllegalStateException.class,
-            () -> new MapConverter(b42Options().tbxOnly(true).exportRoomTbx(false).exportBuildingTbx(false).build()).run());
+            () -> new MapConverter(b42Options().tbxOnly(true).exportBuildingTbx(false).build()).run());
     }
 
     @Test

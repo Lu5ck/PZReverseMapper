@@ -60,6 +60,16 @@ public final class BuildingEdConfig {
     }
 
     /**
+     * A configuration without tile entries or furniture: rebuilt buildings then hold their rooms and
+     * keep every compiled tile as a user-drawn tile.
+     */
+    static BuildingEdConfig empty() {
+        BuildingEdConfig config = new BuildingEdConfig(null, new ArrayList<>(DEFAULT_LAYERS));
+        config.buildIndexes();
+        return config;
+    }
+
+    /**
      * Loads the configuration from a folder containing {@code BuildingTiles.txt} (searched up to a few
      * levels deep, so the PZ_Mapping_Tools checkout or install folder can be given directly).
      */
